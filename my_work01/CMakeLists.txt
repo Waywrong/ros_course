@@ -125,6 +125,13 @@ include_directories(
 #   src/${PROJECT_NAME}/my_work01.cpp
 # )
 
+add_executable(talk src/talk.cpp)                                ## 產生publisher的執行檔
+target_link_libraries(talk ${catkin_LIBRARIES})                    ## 連結publisher與catkin lib
+
+add_executable(listener src/listener.cpp)
+target_link_libraries(listener ${catkin_LIBRARIES})
+
+
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
