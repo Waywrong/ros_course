@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+
+<launch>
+<!-- 參數定義在這邊 -->
+	<arg name="arg_para_Period" 		value="1" />
+	<arg name="arg1" 		value="true" />
+  	<arg name="arg2" 		value="false" />
+
+	<param name="/para_Period"	value="$(arg arg1)" />
+
+<!-- 執行node檔 -->
+	<node pkg="my_work04" type="myNode04" name="myNode04" output="screen" if="$(arg arg1)"/>
+	    
+<!-- 用launch執行launch檔-->
+	<include file="$(find my_work01)/launch/tt.launch" if="$(arg arg2)"/>
+
+</launch>
