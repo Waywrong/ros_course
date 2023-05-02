@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script type="text/javascript" type="text/javascript">
+  // Connecting to ROS
+  // -----------------
+
+  var ros = new ROSLIB.Ros({
+    url : 'ws://localhost:9090'
+  });
+
+  ros.on('connection', function() {
+    console.log('Connected to websocket server.');
+  });
+
+  ros.on('error', function(error) {
+    console.log('Error connecting to websocket server: ', error);
+  });
+
+  ros.on('close', function() {
+    console.log('Connection to websocket server closed.');
+  });
+ 
+  // parameter
+  // -----------------
+  function paraALL(){
+    ros.getParams(function(params) {
+      console.log(params);
+    });
+  }
+  function paraSet(period){
+    var iPeriod = new ROSLIB.Param({
+      ros : ros,
+      name : '/para_Period'
+    });
+    iPeriod.set(period);
+    iPeriod.get(function(value) {
+      console.log('period: ' + value);
+    });
+  }
+   
+  function btn_set_para(){
+    var results = document.getElementById("itemInt01").value;
+    var intResults = parseInt(results, 10);
+    paraSet(intResults);
+  }
+
+</script>
+</head>
+
+<body>
+<h1>Robot Status</h1>
+<center>
+  <h1>Robot Parameter</h1>
+  <input type="submit" 
+      value="show_all" 
+      onclick="paraALL()" />
+ <br><br><br>
+  <input type="submit" 
+      value="Set Timer" 
+      onclick="btn_set_para()" />  
+  <input type="number" name="enter" class="enter" value=5 id="itemInt01"
+           style= "font-size : 20px; height: 50px; width:50px;"/>
+</center>  
+</body>
+</html>

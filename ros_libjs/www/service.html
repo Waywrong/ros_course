@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script type="text/javascript" type="text/javascript">
+  // Connecting to ROS
+  // -----------------
+
+  var ros = new ROSLIB.Ros({
+    url : 'ws://localhost:9090'
+  });
+
+  ros.on('connection', function() {
+    console.log('Connected to websocket server.');
+  });
+
+  ros.on('error', function(error) {
+    console.log('Error connecting to websocket server: ', error);
+  });
+
+  ros.on('close', function() {
+    console.log('Connection to websocket server closed.');
+  });
+ 
+  // Calling a service
+  // -----------------
+  function callService_spawn(strName){
+    var turtleSimClient = new ROSLIB.Service({
+      ros : ros,
+      name : '/spawn',
+      serviceType : 'turtlesim/Spawn'
+    });
+
+    var request = new ROSLIB.ServiceRequest({
+      x : 1,
+      y : 2,
+      theta : 0,
+      name : strName
+    });
+
+    turtleSimClient.callService(request, function(result) {
+      console.log('Result for service call /spawn on '
+        + turtleSimClient.name
+        + ': '
+        + result.name);
+    });
+  }
+  
+  function callService_kill(strName){
+    var turtleSimClient = new ROSLIB.Service({
+      ros : ros,
+      name : '/kill',
+      serviceType : 'turtlesim/Kill'
+    });
+
+    var request = new ROSLIB.ServiceRequest({
+      name : strName
+    });
+
+    turtleSimClient.callService(request, function(result) {
+      console.log('Result for service /kill call on '
+        + turtleSimClient.name
+        + ': '
+        + result.name);
+    });
+  }
+  
+  function btn_spawn(){
+    var itemString;
+    itemString = document.getElementById('itemString');  
+    console.log('itemString: ' + itemString.value);
+    //callService_spawn('kk');
+    callService_spawn(itemString.value);
+  }
+  function btn_kill(){
+    var itemString;
+    itemString = document.getElementById('itemString');  
+    console.log('itemString: ' + itemString.value);
+    callService_kill(itemString.value);
+  }
+
+</script>
+</head>
+
+<body>
+<h1>Robot Control</h1>
+<center>
+  <h1>請輸入小烏龜的名字</h1>
+  <input type="submit" 
+      value="spawn" 
+      onclick="btn_spawn()" />
+ 
+  <input type="submit" 
+      value="kill" 
+      onclick="btn_kill()" />  
+  <input type="text" name="enter" class="enter" value="1" id="itemString"
+           style= "font-size : 20px; height: 100px; width:100px;"/>
+</center>  
+</body>
+</html>

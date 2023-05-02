@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script type="text/javascript" type="text/javascript">
+  // Connecting to ROS
+  // -----------------
+
+  var ros = new ROSLIB.Ros({
+    url : 'ws://localhost:9090'
+  });
+
+  ros.on('connection', function() {
+    console.log('Connected to websocket server.');
+  });
+
+  ros.on('error', function(error) {
+    console.log('Error connecting to websocket server: ', error);
+  });
+
+  ros.on('close', function() {
+    console.log('Connection to websocket server closed.');
+  });
+
+  // Publishing cmd_vel Topic
+  // ------------------
+  function cmd_vel_linear(idx_posminus){
+    var cmdVel = new ROSLIB.Topic({
+      ros : ros,
+      name : '/turtle1/cmd_vel',
+      messageType : 'geometry_msgs/Twist'
+    });
+    var twist = new ROSLIB.Message({
+      linear : {
+        x : 0.8*idx_posminus,
+        y : 0,
+        z : 0,
+      },
+      angular : {
+        x : 0,
+        y : 0,
+        z : 0,
+      }
+    });
+    cmdVel.publish(twist);
+  }
+
+  function cmd_vel_angular(idx_posminus){
+    var cmdVel = new ROSLIB.Topic({
+      ros : ros,
+      name : '/turtle1/cmd_vel',
+      messageType : 'geometry_msgs/Twist'
+    });
+    var twist = new ROSLIB.Message({
+      linear : {
+        x : 0,
+        y : 0,
+        z : 0,
+      },
+      angular : {
+        x : 0,
+        y : 0,
+        z : 0.5*idx_posminus,
+      }
+    });
+    cmdVel.publish(twist);
+  }
+  
+  function cmd_up(){
+    cmd_vel_linear(1);
+  }
+  function cmd_left(){
+    cmd_vel_angular(1);
+  }
+  
+</script>
+</head>
+
+<body>
+<h1>Robot Control</h1>
+<center>
+  <input type="submit" 
+      value="Up" 
+      onclick="cmd_up()" />
+  </br>
+  </br>  
+  <input type="submit" 
+      value="Left" 
+      onclick="cmd_left()" 
+      style="font-size : 20px; width: 400px; height: 100px; background-color: #008CB1; border-radius: 8px;" />  
+</center>  
+</body>
+</html>

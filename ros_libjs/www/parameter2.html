@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script type="text/javascript" type="text/javascript">
+  // Connecting to ROS
+  // -----------------
+
+  var ros = new ROSLIB.Ros({
+    url : 'ws://localhost:9090'
+  });
+
+  ros.on('connection', function() {
+    console.log('Connected to websocket server.');
+  });
+
+  ros.on('error', function(error) {
+    console.log('Error connecting to websocket server: ', error);
+  });
+
+  ros.on('close', function() {
+    console.log('Connection to websocket server closed.');
+  });
+ 
+  // parameter
+  // -----------------
+  function paraALL(){
+    ros.getParams(function(params) {
+      console.log(params);
+    });
+  }
+  function paraSet(bg_r,bg_g,bg_b){
+    var pgBlue = new ROSLIB.Param({
+      ros : ros,
+      name : '/turtlesim/background_b'
+    });
+    var pgGreen = new ROSLIB.Param({
+      ros : ros,
+      name : '/turtlesim/background_g'
+    });
+    var pgRed = new ROSLIB.Param({
+      ros : ros,
+      name : '/turtlesim/background_r'
+    });
+    pgRed.set(bg_r);
+    pgGreen.set(bg_g);
+    pgBlue.set(bg_b);
+    pgRed.get(function(value) {
+      console.log('background_r: ' + value);
+    });
+    pgGreen.get(function(value) {
+      console.log('background_g: ' + value);
+    });
+    pgBlue.get(function(value) {
+      console.log('background_b: ' + value);
+    });
+  }
+  
+  function callService_clear(){
+    var turtleSimClient = new ROSLIB.Service({
+      ros : ros,
+      name : '/clear',
+      serviceType : 'std_srvs/Empty'
+    });
+    var request = new ROSLIB.ServiceRequest({
+      //name : ''
+    });
+    turtleSimClient.callService(request, function(result) {
+      console.log('Result for service /clear call');
+    });
+  }
+  
+  function btn_set_bg(){ 
+    var itemInt01 = document.getElementById('itemInt01').value;
+    var intResults01 = parseInt(itemInt01, 10);
+    var itemInt01 = document.getElementById('itemInt02').value;
+    var intResults02 = parseInt(itemInt02, 10);
+    var itemInt03 = document.getElementById('itemInt03').value;
+    var intResults03 = parseInt(itemInt03, 10);
+    paraSet(intResults01,intResults02,intResults03);
+    callService_clear();
+  }
+
+</script>
+</head>
+
+<body>
+<h1>Robot Status</h1>
+<center>
+  <h1>Robot Parameter</h1>
+  <input type="submit" 
+      value="show_all" 
+      onclick="paraALL()" />
+  <input type="submit" 
+      value="clear" 
+      onclick="callService_clear()" />
+ <br><br><br>
+  <input type="submit" 
+      value="Set Background R G B" 
+      onclick="btn_set_bg()" />  
+  <input type="text" name="enter" class="enter" value="127" id="itemInt01"
+           style= "font-size : 20px; height: 50px; width:50px;"/>
+  <input type="text" name="enter" class="enter" value="127" id="itemInt02"
+           style= "font-size : 20px; height: 50px; width:50px;"/>
+  <input type="text" name="enter" class="enter" value="127" id="itemInt03"
+           style= "font-size : 20px; height: 50px; width:50px;"/>
+</center>  
+</body>
+</html>
