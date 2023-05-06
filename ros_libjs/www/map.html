@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/easeljs.js"></script>
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script type="text/javascript" src="basic/ros2d.js"></script>
+<script>
+  function init() {
+      var ros = new ROSLIB.Ros({
+      url : 'ws://localhost:9090'
+    });
+    // Create the main viewer.
+    var viewer = new ROS2D.Viewer({
+      divID : 'map',
+      width : 640,
+      height : 480
+    });
+
+    // Setup the map client.
+    var gridClient = new ROS2D.OccupancyGridClient({
+      ros : ros,
+      rootObject : viewer.scene,
+      //continuous: true
+    });
+
+    // Scale the canvas to fit to the map
+    gridClient.on('change', function() {
+      viewer.scaleToDimensions(gridClient.currentGrid.width, gridClient.currentGrid.height);
+      viewer.shift(gridClient.currentGrid.pose.position.x, gridClient.currentGrid.pose.position.y);
+    });   
+  }
+</script>
+</head>
+
+<body onload="init()">
+  <h1>Simple Map Example</h1>
+  <p>Turtle Robot</p> 
+  <div id="map"></div>
+</body>
+</html>

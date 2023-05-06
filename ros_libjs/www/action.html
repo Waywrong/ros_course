@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script type="text/javascript" src="basic/eventemitter2.js"></script>
+<script type="text/javascript" src="basic/roslib.js"></script>
+<script>
+  var ros = new ROSLIB.Ros({
+    url : 'ws://localhost:9090'
+  });
+  ros.on('connection', function() {
+    console.log('Connected to websocket server.');
+  });
+  ros.on('error', function(error) {
+    console.log('Error connecting to websocket server: ', error);
+  });
+  ros.on('close', function() {
+    console.log('Connection to websocket server closed.');
+  });
+
+  // Calling an action
+  // -----------------
+  function actionMoveBase(tarX,tarY){
+    var actionClient = new ROSLIB.ActionClient({
+      ros : ros,
+      serverName : '/move_base',
+      actionName : 'move_base_msgs/MoveBaseAction'
+    });
+    var positionVec3 = new ROSLIB.Vector3(null);
+    var orientation = new ROSLIB.Quaternion({x:0, y:0, z:0, w:1.0});
+    positionVec3.x = tarX;
+    positionVec3.y = tarY;
+    var pose = new ROSLIB.Pose({
+      position : positionVec3,
+      orientation : orientation
+    });
+    var goal = new ROSLIB.Goal({
+        actionClient : actionClient,
+        goalMessage : {
+          target_pose : {
+            header : {
+              frame_id : 'map'
+            },
+            pose : pose
+          }
+        }
+    });
+  
+    goal.on('feedback', function(feedback) {
+      console.log('Feedback:' +feedback.base_position.pose.position.x +',' 
+                              +feedback.base_position.pose.position.y);
+      document.getElementById("id_movebase_feedback").innerHTML = 
+                  'Feedback: ' + feedback.base_position.pose.position.x.toFixed(2) 
+                           +',' +feedback.base_position.pose.position.y.toFixed(2);
+    });
+    goal.send();
+
+  }
+  // /move_base/result Topic subscribe 
+  var move_baseListener = new ROSLIB.Topic({
+    ros : ros,
+    name : '/move_base/result',
+    messageType : 'move_base_msgs/MoveBaseActionResult'
+  });      
+  move_baseListener.subscribe(function(actionResult) {
+    console.log('Received message on ' + move_baseListener.name + 'status: ' 
+                                               + actionResult.status.status);
+    alert("in callback of /move_base/result");
+    // actionResult.status.status == 2 (goal cancelled)
+    // actionResult.status.status == 3 (goal reached)
+  });
+  function sendGoal() {
+    var item_f01 = document.getElementById('item_f01').value;
+    //var fResults01 = parseInt(item_f01, 10);
+    var fResults01 = parseFloat(item_f01);
+    var item_f02 = document.getElementById('item_f02').value;
+    var fResults02 = parseFloat(item_f02);
+    console.log('Total:'+(fResults01+fResults02))
+    actionMoveBase(fResults01,fResults02);
+  }
+</script>
+</head>
+
+<body>
+  <h1>Movebase ActionClient Example</h1>
+  <p>Check the Web Console for output</p>
+  <input type="submit" 
+      value="Send Goal X Y" 
+      onclick="sendGoal()" />  
+  <input type="text" name="enter" class="enter" value="-2" id="item_f01"
+           style= "font-size : 20px; height: 30px; width:50px;"/>
+  <input type="text" name="enter" class="enter" value="0.5" id="item_f02"
+           style= "font-size : 20px; height: 30px; width:50px;"/>
+  <p id="id_movebase_feedback"></p>
+</body>
+</html>
