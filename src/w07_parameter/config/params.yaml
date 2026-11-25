@@ -1,0 +1,4 @@
+# W07：給 my_node04 用的參數檔。第一層是 node 名稱。
+my_node04:
+  ros__parameters:
+    period: 1.5
