@@ -133,7 +133,7 @@ button[hidden] { display: none; }
   #bHelp { display: none; }   /* keyboard shortcuts; room for the speed button on a phone */
   #bar .icon.speed { width: 36px; min-width: 0; padding: 0; font-size: 12px; letter-spacing: -.3px; }
   .segs { order: 1; }
-  .segs { min-width: 80px; margin: 0; }
+  .segs { min-width: 80px; margin: 0; flex-basis: 100%; }   /* its own row, also when a button is hidden (iPhone: no full screen) */
   :root.full #bar { transform-origin: left bottom; border-radius: 0; }
 }
 /* Full screen: the stage fills the screen and the controls lie over its foot, out of sight until the pointer moves

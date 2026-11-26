@@ -2118,6 +2118,11 @@ $('bCC').onclick = nextCaptions;
 $('bSpeed').onclick = () => setSpeed(SPEEDS[(SPEEDS.indexOf(P.rate) + 1) % SPEEDS.length]);
 try { const r = +localStorage.getItem('speed'); if (SPEEDS.includes(r)) setSpeed(r); } catch {}
 $('bFull').onclick = () => toggleFull();
+// Safari on iPhone has no full screen for a page (requestFullscreen is undefined there): the button would do nothing,
+// so it is not shown (iPad Safari has it). Full screen's own layout would not help there either: Safari's bars stay
+// and a touch screen keeps the controls under the stage, so the stage came out smaller (587 px wide against 624 on
+// an 844 x 390 window). The reader turns the phone sideways instead.
+if (!document.documentElement.requestFullscreen) $('bFull').style.display = 'none';
 // Full screen also turns the screen to the stage's orientation where the browser allows it (Android browsers lock
 // orientation only in full screen; iOS has no lock, so there the reader turns the phone). On a phone held across the
 // stage's orientation, starting the lesson goes full screen the same way, since the stage would otherwise be a strip.
