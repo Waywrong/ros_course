@@ -1,4 +1,4 @@
-# 環境檢查表（第 1 週發下，第 2 週上課前完成）
+# 環境檢查表（第 1 週發下；用自己筆電的人第 2 週上課前完成，用教室電腦的人第 2 週在教室完成）
 
 課程用 **ROS 2 Jazzy**，作業系統是 **Ubuntu 24.04**，一律在虛擬機（VM）裡執行。
 
@@ -17,7 +17,7 @@
    這樣每台 VM 會有不同的網路卡位址，全班才不會互相衝突。
 4. **VM 設定**：記憶體 4 GB、處理器 2 核以上（第 3–9 週夠用；第 12–14 週的 Gazebo／Nav2 需要多少待確認）。
 5. **3D 加速**：映像預設是**關閉**，不要自己打開（教室電腦沒有獨立顯卡）。第一堂課會在教室確認一次。
-   如果開機後畫面是黑的，在終端機執行 `export LIBGL_ALWAYS_SOFTWARE=1` 再開一次程式，改用軟體繪圖。這行只對**同一個終端機**有效；每次都需要的話，把它加到 `~/.bashrc` 最後一行。
+   如果某個程式的視窗是黑的（例如 RViz、Gazebo），在開那個程式的終端機執行 `export LIBGL_ALWAYS_SOFTWARE=1`，再開一次程式，改用軟體繪圖。這行只對**同一個終端機**有效；每次都需要的話，把它加到 `~/.bashrc` 最後一行。如果開機後整個畫面都是黑的，請老師協助。
 6. **帳號密碼**：上課時公布。
 7. **課程程式碼**：VM 裡已經放好，在 `~/ros2_ws/src/ros_course`。每週上課前照下方「每週上課前：更新程式碼」做。自己的作業不要改在 `ros_course` 裡，請在 `~/ros2_ws/src/` 底下另開套件，否則 `git pull` 會衝突。
 
@@ -26,7 +26,7 @@
 | 你的電腦 | 做法 |
 |---|---|
 | Windows（Intel／AMD） | 安裝 VMware Workstation Pro（17 或更新版，個人使用免費。新版改用年份命名，例如 25H2；下載需要 Broadcom 帳號），然後照 A 的步驟做 |
-| Mac（M1／M2／M3／M4） | 不能用 A 的映像（架構不同），請看下方「Mac（Apple Silicon）」 |
+| Mac（Apple Silicon，M 系列晶片） | 不能用 A 的映像（架構不同），請看下方「Mac（Apple Silicon）」 |
 | Mac（Intel） | 安裝 VMware Fusion，照 A 的步驟做 |
 | 已經裝好 Ubuntu 24.04 | 照下方「自己安裝的人：取得程式碼」做（執行 `setup_jazzy.sh` 時**不要加 sudo**） |
 
@@ -75,7 +75,7 @@ cd ~/ros2_ws/src/ros_course
 git fetch origin && git reset --hard origin/ros2
 ```
 
-## C. 開機後的檢查（全部打勾才算完成）
+## C. 開機後的檢查（全部打勾才算完成；烏龜那兩項第 3 週上課時再做也可以）
 
 - [ ] 開一個終端機，執行 `ros2 --help` 有出現說明
 - [ ] `ros2 run turtlesim turtlesim_node` 有出現烏龜視窗
@@ -93,7 +93,7 @@ git fetch origin && git reset --hard origin/ros2
 
 ---
 
-# Environment checklist (handed out in week 1, done before week 2)
+# Environment checklist (handed out in week 1; on your own laptop, done before week 2; on a classroom PC, done in class in week 2)
 
 The course uses **ROS 2 Jazzy** on **Ubuntu 24.04**, always inside a virtual machine.
 
@@ -107,7 +107,7 @@ The course uses **ROS 2 Jazzy** on **Ubuntu 24.04**, always inside a virtual mac
 2. **Use a drive that isn't restored**: the classroom PCs have restore cards that wipe most drives on reboot. Always keep the VM on the drive the instructor names, which is not restored (explained in class). Keep homework in git or on a USB stick.
 3. **Open the VM**: VMware → Open a Virtual Machine → the `.vmx`. On first boot VMware asks whether the VM was moved or copied: **choose "I Copied It"**, so each VM gets its own network address and the class doesn't collide.
 4. **VM settings**: at least 4 GB RAM and 2 cores (enough for weeks 3–9; what weeks 12–14 need for Gazebo/Nav2 is to be confirmed).
-5. **3D acceleration**: the image has it **off**; don't turn it on (the classroom PCs have no discrete GPU). It is checked once in the first class. If the screen is black, run `export LIBGL_ALWAYS_SOFTWARE=1` in the terminal and start the program again (software rendering). It only applies to **that terminal**; if you always need it, add it as the last line of `~/.bashrc`.
+5. **3D acceleration**: the image has it **off**; don't turn it on (the classroom PCs have no discrete GPU). It is checked once in the first class. If a program's window is black (for example RViz or Gazebo), run `export LIBGL_ALWAYS_SOFTWARE=1` in the terminal you start it from, then start it again (software rendering). It only applies to **that terminal**; if you always need it, add it as the last line of `~/.bashrc`. If the whole screen is black after boot, ask the instructor.
 6. **Username and password**: announced in class.
 7. **Course code**: already in the VM at `~/ros2_ws/src/ros_course`. Before each class, follow "Before each class: update the code" below. Don't edit your homework inside `ros_course`; make your own package under `~/ros2_ws/src/`, or `git pull` will conflict.
 
@@ -161,7 +161,7 @@ cd ~/ros2_ws/src/ros_course
 git fetch origin && git reset --hard origin/ros2
 ```
 
-## C. Checks after booting (all must pass)
+## C. Checks after booting (all must pass; the two turtle checks can wait until the week 3 class)
 - [ ] `ros2 --help` prints help
 - [ ] `ros2 run turtlesim turtlesim_node` opens the turtle window
 - [ ] In a second terminal, `ros2 run turtlesim turtle_teleop_key` moves the turtle with the arrow keys

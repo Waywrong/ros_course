@@ -15,7 +15,7 @@ from std_msgs.msg import String
 class Talker(Node):
     def __init__(self):
         super().__init__('talker')  # node 名稱為 talker
-        # 建立 publisher：topic 名稱 chatter，型別 std_msgs/String
+        # 建立 publisher：topic 名稱 chatter，型別 std_msgs/msg/String
         # 10 是 queue 深度（QoS）：送太快、對方來不及收時，最多保留 10 則
         self.pub = self.create_publisher(String, 'chatter', 10)
         self.count = 0

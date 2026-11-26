@@ -6,3 +6,5 @@ __pycache__/
 .DS_Store
 *.mcap
 *.db3
+slides/render/out/
+~$*

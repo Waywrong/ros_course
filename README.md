@@ -40,11 +40,17 @@ cd ~/ros2_ws && colcon build --symlink-install
 | `src/final_review` | 期末複習 | 猜數字 service | `finalExam` |
 | `setup/setup_jazzy.sh` | W02 | 在 Ubuntu 24.04 上安裝課程環境 | — |
 | `docs/environment-checklist.md` | W01 | 環境檢查表 | — |
+| `docs/`（其他檔案） | W04 | 動畫講義網站，見下方 | — |
+
+## 動畫講義
+
+**https://waywrong.github.io/ros_course/** ：用動畫說明每週的觀念，有小測驗和練習。目前有 W04 的兩章：「訊息怎麼從 talker 到 listener」、「從 colcon build 到 ros2 run」。旁白是中文；按 C（手機上按播放列的 CC 鈕）依序切換「關 → 中文 → 英文」字幕，選英文時題目也是英文。用手機看請把手機轉成橫向：iPhone 的 Safari 不支援全螢幕。網頁的原始檔在這個分支的 `docs/`。
 
 ## 授權
 
 - **程式碼**（`src/`、`setup/`）：MIT，見 [`LICENSE`](LICENSE)。
 - **講義、文件與課程網頁**：CC BY-NC-SA 4.0，見 [`LICENSE-CONTENT.md`](LICENSE-CONTENT.md)。
+- **動畫講義的播放程式**：`docs/lib/` 裡的 `engine.*`、`contents.*`、`units.*`、`volume.*`、`math.js` 改自開源專案 Papermorph（加了繁體中文介面和字幕語言切換），MIT，見 [`docs/lib/LICENSE-papermorph`](docs/lib/LICENSE-papermorph)。其餘網頁檔（包括畫角色和場景的 `robots.js`、`rooms.js`、`screens.js`、`workshop.js`）是課程網頁，照上一條。
 
 ---
 
@@ -79,7 +85,12 @@ Open a new terminal after building. Keep your homework out of `ros_course`: make
 
 The table above lists each folder, its week, what it covers and its ROS 1 counterpart on the `main` branch.
 
+## Animated lessons
+
+**https://waywrong.github.io/ros_course/**: each week's ideas as short animations, with quick checks and practice. So far, the two W04 chapters: how a message gets from talker to listener, and from colcon build to ros2 run. The narration is in Chinese; press C (on a phone, the CC button in the player bar) to cycle the captions off → Chinese → English; with English, the questions are in English too. On a phone, turn it sideways: Safari on iPhone has no full screen. The site's files are in `docs/` on this branch.
+
 ## License
 
 - **Code** (`src/`, `setup/`): MIT, see [`LICENSE`](LICENSE).
 - **Slides, docs and the course web pages**: CC BY-NC-SA 4.0, see [`LICENSE-CONTENT.md`](LICENSE-CONTENT.md).
+- **The animated lessons' player**: `engine.*`, `contents.*`, `units.*`, `volume.*` and `math.js` in `docs/lib/` are adapted from the open-source Papermorph project (with a Traditional Chinese interface and caption languages added), MIT, see [`docs/lib/LICENSE-papermorph`](docs/lib/LICENSE-papermorph). The other web files (including `robots.js`, `rooms.js`, `screens.js` and `workshop.js`, which draw the characters and scenes) are course web pages, under the previous item.

@@ -1,0 +1,865 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>從 colcon build 到 ros2 run</title>
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/rooms.js"></script>
+<script src="../lib/robots.js"></script>
+<script src="../lib/screens.js"></script>
+<script src="../lib/workshop.js"></script>
+<script src="captured.js"></script>
+<script src="audio/zh-TW/timings.js"></script>
+<script src="captions.en.js"></script>
+<script>
+'use strict';
+// Chapter 5, tier 2: from colcon build to ros2 run. open: talker's room from chapter 4, the terminal where we ran it;
+// how did that one line find talker, and where does "Package not found" come from? Then a workshop and warehouses
+// inside the computer: src is a workbench (package.xml the name card, setup.py the work order, the code folder a crate
+// of parts); colcon build is a machine that turns them into finished goods on the install shelves (build/ a bin of
+// offcuts, log/ a clipboard); console_scripts makes the machine stamp out a launcher box on lib/w04_pubsub, wired to
+// talker.py's main; source pins the warehouse's address on a list board (AMENT_PREFIX_PATH); a small grey helper robot
+// plays ros2 run: it carries the command card, reads the list, checks the package's name tag (the ament index marker),
+// finds the launcher box and presses it, and talker wakes. The two error messages are its two misses; --symlink-install
+// is the wire running back to the part on the bench.
+const CHAPTER = { number: 5, title: '從 colcon build 到 ros2 run', minutes: 7, language: 'zh-TW', languages: ['en'] };   // English: captions.en.js and the cards (bi)
+
+/* ---------- the real terminal output and the course's files (captured.js, generated from the real captures) ---------- */
+const shortTs = line => line.replace(/\[\d+\.\d+\]/, '[…]');   // the page shortens the timestamp to […]
+// A terminal wraps a long line at its width: the same text cut every `cols` characters, as the screen shows it
+const wrapCols = (lines, cols) => lines.flatMap(l => { const out = []; for (let i = 0; i < Math.max(1, l.length); i += cols) out.push(l.slice(i, i + cols)); return out; });
+const CMD = CAPTURED.runBeforeBuild[0];                                   // $ ros2 run w04_pubsub talker
+const [, RUN, PKG, EXE] = CMD.match(/^\$ (ros2 run) (\S+) (\S+)$/);        // ros2 run, w04_pubsub, talker
+const CMD2 = CAPTURED.runNoExec[0], EXE2 = CMD2.match(/ros2 run \S+ (\S+)$/)[1];   // the run with a name not in setup.py: talker2
+const NOT_FOUND = CAPTURED.runBeforeSource[1], NO_EXEC = CAPTURED.runNoExec[1];
+const SOURCE_CMD = CAPTURED.sourceCmd, SOURCE_LINE = SOURCE_CMD.replace(/^\$ /, '');
+const PREFIX_BEFORE = CAPTURED.prefixBefore[1].split(':'), PREFIX_AFTER = CAPTURED.prefixAfter[1].split(':');
+const WS_PREFIX = PREFIX_AFTER.find(x => !PREFIX_BEFORE.includes(x)), ROS_PREFIX = PREFIX_BEFORE[0];   // the workspace's install, /opt/ros/jazzy
+const INSTALL_DIR = WS_PREFIX.match(/(install\/[^/]+)$/)[1];             // install/w04_pubsub
+const WS_HOME = FILES.bashrc.match(/(~\/\S+?)\/install\/setup\.bash/)[1];   // ~/ros2_ws, where the course's .bashrc sources from
+const inPrefix = cmd => cmd.match(/install\/[^/]+\/(\S+)$/)[1];
+const LIB_DIR = inPrefix(CAPTURED.installLib[0]), MARK_DIR = inPrefix(CAPTURED.marker[0]);   // lib/w04_pubsub, share/ament_index/…/packages
+const EGG_PATH = inPrefix(CAPTURED.eggLink[0]), EGG_DIR = EGG_PATH.replace(/\/[^/]+$/, ''), EGG_FILE = EGG_PATH.replace(/^.*\//, '');
+const EXES = CAPTURED.installLib.slice(1), MARKER = CAPTURED.marker[1];  // listener, talker; the name tag w04_pubsub
+const PKG_NAME = FILES['package.xml'].map(l => l.match(/<name>(.*)<\/name>/)).find(Boolean)[1];
+const DEPENDS = FILES['package.xml'].map(l => l.match(/<exec_depend>(.*)<\/exec_depend>/)).filter(Boolean).map(r => r[1]);
+// console_scripts: each line 'name = module:function'
+const SETUP = FILES['setup.py'], ENTRY_A = SETUP.findIndex(l => l.includes('entry_points')), ENTRY_B = SETUP.findIndex((l, i) => i > ENTRY_A && /^\s*},/.test(l));
+const ENTRY_LINES = SETUP.slice(ENTRY_A, ENTRY_B + 1);
+const SCRIPTS = ENTRY_LINES.map(l => l.match(/'(\w+) = ([\w.]+):(\w+)'/)).filter(Boolean).map(([line, name, module, func]) => ({ line, name, module, func, file: module.split('.').pop() + '.py' }));
+const TK_SCRIPT = SCRIPTS.find(s => s.name === EXE), LS_SCRIPT = SCRIPTS.find(s => s.name !== EXE);
+const CS_LINES = ENTRY_LINES.slice(0, ENTRY_LINES.findIndex(l => l.includes(LS_SCRIPT.line)) + 1);   // entry_points down to listener's line
+const TALKER_DEFS = FILES[TK_SCRIPT.file].map(l => l.match(/^\s*def (\w+)\(/)).filter(Boolean).map(r => r[1]);   // __init__, on_timer, main
+const SETUP_DEFS = SETUP.map(l => l.match(/^\s*def (\w+)\(/)).filter(Boolean).map(r => r[1]);                    // none
+// the code folder: the files the find listing shows under src/w04_pubsub/w04_pubsub/
+const CODE_DIR = `src/${PKG}/${PKG}/`, CODE_FILES = CAPTURED.srcTree.filter(l => l.startsWith(CODE_DIR)).map(l => l.slice(CODE_DIR.length));
+const COLCON_S = +CAPTURED.colcon.find(l => l.startsWith('Finished')).match(/\[([\d.]+)s\]/)[1];   // 0.64 s: the build itself
+// talker's printed lines in the capture: their real rate, from the timestamps
+const TALK_TS = CAPTURED.runTalker.map(l => l.match(/\[(\d+\.\d+)\]/)).filter(Boolean).map(r => +r[1]);
+const TALK_RATE = (TALK_TS.length - 1) / (TALK_TS[TALK_TS.length - 1] - TALK_TS[0]);   // about 10 a second
+// q2: the console_scripts line a new program would add, from talker's own line
+const Q2_EXE = 'counter', Q2_LINE = ENTRY_LINES.find(l => l.includes(TK_SCRIPT.line)).replaceAll(EXE, Q2_EXE);
+// setup.py's lines on screen in src: name, packages, data_files, entry_points (⋮ where lines are skipped)
+const setupPick = keys => { const idx = keys.map(k => SETUP.findIndex(l => l.trim().startsWith(k))), out = []; idx.forEach((i, j) => { if (j && i > idx[j - 1] + 1) out.push('⋮'); out.push(SETUP[i]); }); return out; };
+const SETUP_SHOW = setupPick(['name=', 'packages=', 'data_files=', 'entry_points=']);
+const XML_SHOW = FILES['package.xml'].filter(l => /<name>|<exec_depend>/.test(l));
+
+/* ---------- the world: one long hall, in world coordinates (shown through a camera) ---------- */
+const FLOOR = ROOMS.floor;
+const BENCH = { x: 40, w: 760, top: 560 }, CARD_X = 150, ORDER_X = 345, CRATE = { x: 612, w: 360 };
+const MACH = { x: 880, w: 320, h: 330 }, BIN = { x: 1262, w: 100 }, CLIP = { x: 1312, y: 412 };
+const WH = { x: 1400, w: 500, top: 330, levels: [470, 640, 752] };          // install/w04_pubsub
+const TAG_AT = [1560, 345], BOX_X = { listener: 1493, talker: 1650 }, NEW_SLOT = 1807, EGG_AT = [1560, 752], BOX = { w: 140, h: 80, size: 26 };
+const TK_SPOT = 2140, TK_S = .85;                                            // talker, asleep beside the warehouse, clear of the helper's card
+const TERM_W = { x: 2100, y: 60, w: 600, rows: 4, size: 30 }, HOME_X = 2400, HELP_S = .78;
+const BOARD = { x: 2040, y: 300, w: 720, size: 26, cardSize: 28 };          // its cards are read in wide shots: 28 px
+const JZ = { x: 2800, w: 540, top: 300, levels: [470, 640] }, JZ_TAGS = [[2890, DEPENDS[0]], [3065, DEPENDS[1]], [3235, '…']];
+// the helper presses a box with its L hand from the box's right, the card in its R hand; it stands so that hand meets the button
+const PRESS_DX = (() => { const [, , , , hx] = robotArm(-1, ROBOT_POSE.pressL.L); return -hx * HELP_S; })();
+const PRESS_X = BOX_X.talker + PRESS_DX, TAG_X = TAG_AT[0] + 120, JZ_X = 2990;
+// views
+const SHOP_WIDE = { x: 975, y: 450, z: .84 }, BENCH_VIEW = { x: 680, y: 420, z: 1.25 };
+const SHELF_VIEW = { x: 1480, y: 540, z: 1.3 }, LINK_VIEW = { x: 1100, y: 520, z: .95 };   // entry's lib shelf; symlink's whole wire
+const MID_VIEW = { x: 2080, y: 450, z: 1.15 }, TAG_VIEW = { x: 1730, y: 520, z: 1.55 }, DISTRICT = { x: 2370, y: 450, z: .82 };
+const E2_VIEW = { x: 1990, y: 455, z: 1.1 };                                            // errors' second miss: the lib shelf, the helper, talker (the terminal's title bar in the frame)
+
+/* ---------- small helpers (as in ch04) ---------- */
+const clamp01 = q => Math.max(0, Math.min(1, q));
+const popIn = (e, t, d = .45) => { put(e, { o: 0, s: .6 }); tw(e, { o: 1, s: 1 }, t, d, back); return e; };
+const fadeIn = (e, t, d = .4) => { put(e, { o: 0 }); tw(e, { o: 1 }, t, d); return e; };
+const lerpPt = ([ax, ay], [bx, by], q) => [ax + (bx - ax) * q, ay + (by - ay) * q];
+function pill(p, main, sub, { x, y, bg, ink = '#fff', size = 28, point = 0, side = 'down', px = 0, line, font = UI } = {}) {
+  const g = G(p, { x, y, o: 0 });
+  ctx2d.font = `700 ${size}px ${font}`; const w1 = ctx2d.measureText(main).width;
+  ctx2d.font = `500 ${size * .82}px ${font}`; const w2 = sub ? ctx2d.measureText(' ' + sub).width : 0;
+  const w = w1 + w2 + size * 1.1, h = size * 1.55, k = side === 'up' ? -1 : 1, attrs = { fill: bg, stroke: line || 'none', 'stroke-width': 3 };
+  const sx = side === 'right' ? -1 : 1;
+  if (point) path(g, side === 'left' || side === 'right' ? `M${sx * (-w / 2 + 4)} ${px - 12}L${sx * (-w / 2 - point)} ${px}L${sx * (-w / 2 + 4)} ${px + 12}Z`
+    : `M${px - 13} ${k * (h / 2 - 2)}L${px} ${k * (h / 2 + point)}L${px + 13} ${k * (h / 2 - 2)}Z`, attrs);
+  mk('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, ...attrs }, g);
+  if (point && line) path(g, side === 'left' || side === 'right' ? `M${sx * (-w / 2 + 5.5)} ${px - 10}V${px + 10}` : `M${px - 11} ${k * (h / 2 - 1.5)}H${px + 11}`, { stroke: bg, 'stroke-width': 4 });
+  const t = put(mk('text', { 'font-size': size, 'font-weight': 700, 'font-family': font, fill: ink }, g), { x: -w / 2 + size * .55, y: size * .36 });
+  t.textContent = main; t.style.whiteSpace = 'pre';
+  if (sub) { const ts = mk('tspan', { 'font-size': size * .82, 'font-weight': 500 }, t); ts.textContent = ' ' + sub; }
+  return Object.assign(g, { w });
+}
+// A curved arrow from a to b, bending towards c; arrow.drawAt(t0, dur) draws it on and shows its head on arrival.
+function curveArrow(p, [ax, ay], [cx, cy], [bx, by], { color = ROOMS.ink, width = 5 } = {}) {
+  const g = G(p), ang = Math.atan2(by - cy, bx - cx);
+  const line = path(g, `M${ax} ${ay}Q${cx} ${cy} ${bx} ${by}`, { stroke: color, 'stroke-width': width }, { d: 0 });
+  const head = path(g, `M${bx - 18 * Math.cos(ang - .5)} ${by - 18 * Math.sin(ang - .5)}L${bx} ${by}L${bx - 18 * Math.cos(ang + .5)} ${by - 18 * Math.sin(ang + .5)}`, { stroke: color, 'stroke-width': width }, { o: 0 });
+  return Object.assign(g, { line, head, drawAt(t0, dur = .6) { draw(line, t0, dur); tw(head, { o: 1 }, t0 + dur - .1, .15); return g; } });
+}
+const crossOut = (p, x, y, r = 40) => put(path(p, `M${x - r} ${y - r}L${x + r} ${y + r}M${x + r} ${y - r}L${x - r} ${y + r}`, { stroke: '#e0503f', 'stroke-width': 10 }), { o: 0 });
+function checkMark(p, x, y, r = 30) {
+  const g = G(p, { x, y, o: 0 });
+  mk('circle', { r, fill: '#3f8a4d', stroke: '#fffdf8', 'stroke-width': 4 }, g);
+  path(g, `M${-r * .48} 0L${-r * .12} ${r * .38}L${r * .52} ${-r * .38}`, { stroke: '#fff', 'stroke-width': r * .2 });
+  return g;
+}
+function stepTag(p, k, words, { x, y, color = ROOMS.ink, size = 32, side = 'right', o = 0 }) {
+  const g = G(p, { x, y, o }), r = size * .95;
+  const pl = pill(g, words, null, { x: 0, y: 0, bg: '#fffdf8', ink: ROOMS.ink, line: color, size });
+  put(pl, { o: 1, x: (side === 'left' ? -1 : 1) * (pl.w / 2 + r * .7) });
+  mk('circle', { r, fill: color, stroke: '#fffdf8', 'stroke-width': 4 }, g);
+  T(g, String(k), { y: size * .36, size: size * 1.05, weight: 800, fill: '#fff', anchor: 'middle' });
+  return Object.assign(g, { pill: pl });
+}
+// 「放慢」: a small badge in screen space while the picture runs slower than real time, with the factor when it is
+// constant. spans [[t0, t1, factor or null]], t1 null: to the beat's end
+function slowBadge(p, spans, { xr = 1584, y = 46, line } = {}) {
+  spans.forEach(([t0, t1, k]) => {
+    const b = pill(p, '放慢', k ? `${Math.round(k)} 倍` : null, { x: 0, y, bg: '#3d3833', ink: '#fff', size: 24, line });
+    put(b, { x: xr - b.w / 2 }); tw(b, { o: .92 }, t0, .3); if (t1 != null) tw(b, { o: 0 }, t1, .3);
+  });
+}
+// What a terminal shows at beat time t. steps [t0, n, typing]: from t0 the first n lines, and with typing line n being
+// typed after its '$ ' prompt (a short pause first, then CPS characters a second). Pure: from t alone.
+function termAt(term, lines, steps, D, { cps = 26 } = {}) {
+  clockRun(t => {
+    let n = 0, k = 0;
+    for (const [t0, nn, typing] of steps) if (t >= t0) { n = nn; k = typing ? Math.min(lines[nn].length, 2 + Math.max(0, Math.floor((t - t0 - .35) * cps))) : 0; }
+    term.show(n, k);
+  }, D, { tail: true });
+  return term;
+}
+const typeEnd = (t0, line, cps = 26) => t0 + .35 + (line.length - 2) / cps;   // when typing that line is done
+// an outline drawn round a panel (o 0): a terminal or code panel lit
+const outline = (p, e, color, pad = 4) => put(mk('rect', { x: e.x - pad, y: e.y - pad, width: e.w + 2 * pad, height: e.h + 2 * pad, rx: 13, fill: 'none', stroke: color, 'stroke-width': 6 }, p), { o: 0 });
+// the command card the helper carries: 'ros2 run' on a dark strip, then the package and the executable it looks for
+function cmdCard(p, line, { o = 0 } = {}) {
+  const [, run, pkg, exe] = line.match(/^\$ (ros2 run) (\S+) (\S+)$/), g = G(p, { o }), fs = 23;
+  const w = Math.max(shopTextW(pkg, fs, 700), shopTextW(exe, fs, 700)) + 34, h = 112;
+  mk('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: 10, fill: SHOP.paper, stroke: SHOP.ink, 'stroke-width': 3 }, g);
+  path(g, `M${-w / 2 + 1.5} ${-h / 2 + 34}V${-h / 2 + 10}Q${-w / 2 + 1.5} ${-h / 2 + 1.5} ${-w / 2 + 10} ${-h / 2 + 1.5}H${w / 2 - 10}Q${w / 2 - 1.5} ${-h / 2 + 1.5} ${w / 2 - 1.5} ${-h / 2 + 10}V${-h / 2 + 34}Z`, { fill: SCREENS.term, stroke: 'none' });
+  shopText(g, run, { x: 0, y: -h / 2 + 24, size: 18, weight: 700, fill: '#9fe3a0', anchor: 'middle' });
+  // not found (step 1 or step 2): the line turns red behind its text, a red mark sits on the card's edge beside it
+  const miss = y => {
+    const m = G(g, { o: 0 });
+    mk('rect', { x: -w / 2 + 8, y: y - fs * .92, width: w - 16, height: fs * 1.3, rx: 6, fill: '#e0503f', 'fill-opacity': .3 }, m);
+    const b = G(m, { x: w / 2, y: y - fs * .3 });
+    mk('circle', { r: 17, fill: '#e0503f', stroke: '#fffdf8', 'stroke-width': 3 }, b);
+    path(b, 'M-7 -7L7 7M7 -7L-7 7', { stroke: '#fff', 'stroke-width': 4.5 });
+    return m;
+  };
+  const row = (str, y, col) => {
+    const hi = put(mk('rect', { x: -w / 2 + 8, y: y - fs * .92, width: w - 16, height: fs * 1.3, rx: 6, fill: col, 'fill-opacity': .28 }, g), { o: 0 });
+    const ms = miss(y);
+    shopText(g, str, { x: 0, y, size: fs, weight: 700, anchor: 'middle' });
+    return [hi, ms];
+  };
+  const [hiPkg, missPkg] = row(pkg, -h / 2 + 62, ROOMS.violet), [hiExe, missExe] = row(exe, -h / 2 + 96, ROBOT.talker.body);
+  return Object.assign(g, { hiPkg, hiExe, missPkg, missExe, pkg, exe, w, h });
+}
+// the helper's shrug with its card still held up: the free arm and the head do it
+const SHRUG_UP = { L: ROBOT_POSE.shrug.L, R: ROBOT_POSE.raiseR.R, head: 9 };
+// a card that follows a robot's hand at every beat time (pure: from the hand's position at t)
+function holdCard(rb, card, D, hand = 'R') {
+  clockRun(t => { const [hx, hy] = rb.handAt(t, hand); put(card, { x: hx + (hand === 'R' ? 1 : -1) * (card.w / 2 - 18), y: hy - card.h / 2 + 12 }); }, D, { tail: true });
+}
+// a dotted line between two points (o 0)
+const dotted = (p, [ax, ay], [bx, by], color = ROOMS.violet) => put(path(p, `M${ax} ${ay}L${bx} ${by}`, { stroke: color, 'stroke-width': 6, 'stroke-dasharray': '1 13' }), { o: 0 });
+
+/* ---------- the hall and everything in it ---------- */
+// built: the build's products (machine, bin, log, warehouse and its goods); board: null, 'before' or 'after';
+// term: the lines of the terminal in the hall (null: none); helper: the helper robot (hidden until a beat shows it);
+// wire: the cables drawn, at opacity wire (0 hidden); egg: the site-packages shelf with the egg-link (only symlink
+// talks about it). Shelf labels start hidden: a beat shows the one it names.
+function shopWorld(w, D, { built = true, board = 'after', term = null, helper = false, talker = true, wire = 1, jazzy = true, egg = false } = {}) {
+  const L = { hall: G(w), back: G(w), mid: G(w), wires: G(w), goods: G(w), cast: G(w), front: G(w), top: G(w) };   // the wires run behind the goods: into a box, through the egg-link
+  shopHall(L.hall, { x0: -800, x1: 4200, zones: [[1370, 4200, SHOP.wallCool]] });
+  const banner = shopSign(L.back, WS_HOME, { x: 190, y: 100, size: 34, hang: true });
+  const srcSign = shopSign(L.back, 'src/', { x: 120, y: 250, size: 34, hang: true });   // under the workspace's name: the path reads down
+  // the bench: src (one group, so it can step back)
+  const bench = G(L.mid);
+  shopBench(bench, BENCH);
+  const mat = shopMat(bench, { x: BENCH.x + 12, w: BENCH.w - 24, y: BENCH.top, label: `${PKG}/` }); put(mat.tab, { x: ORDER_X - 90 });
+  const card = shopNameCard(bench, { x: CARD_X, y: BENCH.top - 2, name: PKG_NAME, note: `用到 ${DEPENDS.join('、')}` });
+  const order = shopOrder(bench, { x: ORDER_X, y: BENCH.top - 2, title: 'setup.py', rows: 7 });
+  const partColor = f => f.startsWith(EXE) ? ROBOT.talker.body : f.startsWith(LS_SCRIPT.name) ? ROBOT.listener.body : '#a2a8ae';
+  const crate = shopCrate(bench, { x: CRATE.x, y: BENCH.top - 2, w: CRATE.w, label: `${PKG}/`, parts: CODE_FILES.map(f => ({ name: f, color: partColor(f) })) });
+  const partOf = f => crate.partAt(CODE_FILES.indexOf(f));
+  // the machine: colcon build, its belts, its bin (build/) and clipboard (log/)
+  const prod = G(L.mid, { o: built ? 1 : 0 });
+  const beltIn = shopBelt(prod, [BENCH.x + BENCH.w - 6, BENCH.top - 12], [MACH.x + 26, FLOOR - MACH.h - 64]);
+  const machine = shopMachine(prod, { ...MACH, label: 'colcon build' });
+  const beltOut = shopBelt(prod, [machine.chute[0] - 6, machine.chute[1] + 12], [WH.x - 10, machine.chute[1] + 12]);
+  const bin = shopBin(prod, { ...BIN, label: 'build/' }), clip = shopClip(prod, { ...CLIP, label: 'log/' });
+  put(bin.scraps, { o: built ? 1 : 0 }); put(clip.sheet, { o: built ? 1 : 0 });
+  // the warehouse: install/w04_pubsub, its shelves and goods
+  const wh = shopShelves(L.mid, { x: WH.x, w: WH.w, top: WH.top, sign: INSTALL_DIR, labels: false, levels: [{ y: WH.levels[0], label: MARK_DIR }, { y: WH.levels[1], label: LIB_DIR, align: 'start' }, { y: WH.levels[2], label: EGG_DIR }] });   // lib's path at the left: clear of the helper, who stands at the right
+  put(wh, { o: built ? 1 : 0 }); put(wh.level(2).g, { o: egg ? 1 : 0 });
+  const tag = shopTag(L.goods, { x: TAG_AT[0], y: TAG_AT[1], name: MARKER, note: `${FILES.marker.bytes} bytes`, size: 28, o: built ? 1 : 0 });
+  const boxes = Object.fromEntries(EXES.map(n => { const C = ROBOT[n === EXE ? 'talker' : 'listener']; return [n, shopBox(L.goods, { x: BOX_X[n === EXE ? 'talker' : 'listener'], y: WH.levels[1], name: n, color: C.body, dark: C.dark, light: C.light, ...BOX, o: built ? 1 : 0 })]; }));
+  const eggC = G(L.goods, { x: EGG_AT[0], y: EGG_AT[1], o: built && egg ? 1 : 0 });
+  { const ew = shopTextW(EGG_FILE, 22) + 28; mk('rect', { x: -ew / 2, y: -44, width: ew, height: 44, rx: 5, fill: SHOP.paper, stroke: SHOP.steelDk, 'stroke-width': 3 }, eggC); shopText(eggC, EGG_FILE, { x: 0, y: -14, size: 22, anchor: 'middle' }); eggC.w = ew; }
+  // the wires from each launcher box to its function's part on the bench: through the egg-link, build/ and the floor
+  const wirePts = (exe, dy) => {
+    const b = boxes[exe], s = partOf(SCRIPTS.find(q => q.name === exe).file).socket, down = exe === EXE ? b.button[0] + 52 : WH.x + 22;
+    // into build/ over the bin's lip and down past the left of its label; at the crate, talker's enters its card below its
+    // name, listener's runs in the gap above talker.py's name to the card behind (no label under a cable)
+    const last = exe === EXE ? [[CRATE.x + CRATE.w / 2 + 4, s[1] + 16], [s[0] + 50, s[1] + 8], s] : [[CRATE.x + CRATE.w / 2 + 4 + dy, s[1] - 2], [s[0] + 60, s[1]], s];
+    return [[b.button[0] + (exe === EXE ? 30 : -50), WH.levels[1] - 18], [down, WH.levels[1] + 30], [down - (exe === EXE ? 30 : 0), EGG_AT[1] - 24], [EGG_AT[0] - 110, EGG_AT[1] - 8 + dy],
+      [BIN.x + BIN.w / 2 + dy, FLOOR - 94], [BIN.x - 8 + dy * .3, FLOOR - 92], [BIN.x - 40, FLOOR - 14 + dy * .3], [MACH.x + 120, FLOOR - 10 + dy * .3], [BENCH.x + BENCH.w + 4 + dy, FLOOR - 60], [BENCH.x + BENCH.w + 2 + dy, BENCH.top - 40], ...last];
+  };
+  const wires = { [EXE]: shopWire(L.wires, wirePts(EXE, 0), { color: '#3a3633', width: 5 }), [LS_SCRIPT.name]: shopWire(L.wires, wirePts(LS_SCRIPT.name, -12), { color: '#3a3633', width: 5 }) };
+  Object.values(wires).forEach(wi => { put(wi.line, { d: wire ? 1 : 0 }); put(wi, { o: wire || 1 }); });
+  // the district: talker, the terminal, the board, /opt/ros/jazzy
+  const tk = talker ? robot(L.cast, 'talker', { x: TK_SPOT, y: FLOOR, s: TK_S }).eyes(0, -.4, .2).live(D) : null;
+  const tm = term ? termPanel(L.back, term, { ...TERM_W, title: WS_HOME }) : null;
+  const bd = shopBoard(L.back, { ...BOARD, title: 'AMENT_PREFIX_PATH', rows: 2, o: board ? 1 : 0 });
+  const cards = { ws: bd.card(WS_PREFIX, PREFIX_AFTER.indexOf(WS_PREFIX)), ros: bd.card(ROS_PREFIX, 0) };
+  put(cards.ros, { o: 1, y: bd.slotAt(board === 'after' ? PREFIX_AFTER.indexOf(ROS_PREFIX) : 0)[1] });
+  put(cards.ws, { o: board === 'after' ? 1 : 0 });
+  const jz = jazzy ? G(L.mid) : null, jzTags = [];
+  if (jazzy) {
+    shopShelves(jz, { x: JZ.x, w: JZ.w, top: JZ.top, sign: ROS_PREFIX, tint: SHOP.steel, dark: SHOP.steelDk, light: SHOP.steelLt, labels: false, levels: [{ y: JZ.levels[0], label: MARK_DIR }, { y: JZ.levels[1], label: 'lib' }] });
+    JZ_TAGS.forEach(([x, n]) => jzTags.push(shopTag(jz, { x, y: TAG_AT[1], name: n, size: 28, color: SHOP.steelDk })));
+    for (let k = 0; k < 4; k++) shopBox(jz, { x: JZ.x + 80 + k * 128, y: JZ.levels[1], name: '', color: SHOP.steelLt, dark: SHOP.steelDk, light: '#dfe4e8', w: 100, h: 60 });
+  }
+  const hp = helper ? robot(L.cast, 'helper', { x: HOME_X, y: FLOOR, s: HELP_S, pose: 'holdR', o: 0 }).live(D) : null;
+  const goods = [tag, ...Object.values(boxes)];   // what the warehouse holds that every beat may show
+  return { L, banner, srcSign, bench, mat, card, order, crate, partOf, prod, beltIn, machine, beltOut, bin, clip, wh, tag, boxes, goods, egg: eggC, wires, tk, tm, bd, cards, jz, jzTags, hp };
+}
+// step parts back (o .35 by default) at t0 over .4 s, or bring them forward: what the narration is not talking about
+const dim = (list, t0, o = .35, d = .4) => list.forEach(e => e && tw(e, { o }, t0, d));
+// the empty place on the lib shelf where a new program's box would stand (drawn around its foot, o given)
+function newSlot(W, o = 0) {
+  const g = G(W.L.goods, { x: NEW_SLOT, y: WH.levels[1], o });
+  mk('rect', { x: -BOX.w / 2, y: -BOX.h, width: BOX.w, height: BOX.h, rx: 4, fill: 'none', stroke: SHOP.steelDk, 'stroke-width': 4, 'stroke-dasharray': '10 8' }, g);
+  T(g, '?', { x: 0, y: -BOX.h / 2 + 16, size: 46, weight: 800, fill: SHOP.steelDk, anchor: 'middle' });
+  return g;
+}
+// the slot of the board a card sits in: its y
+const slotY = (W, i) => W.bd.slotAt(i)[1];
+
+/* ---------- beats: [id, title, run(m, D), extra] ---------- */
+const BEATS = [
+  ['open', '一行 ros2 run', (m, D) => {
+    const p = panel(0), set = G(p); rooms(set);
+    // talker, asleep in its room until the line runs; the terminal we ran it in
+    const tWake = 2.75, tOut = 3.15, SHOWN = 2;   // printed lines a second on screen (the real run: about TALK_RATE)
+    const tk = robot(p, 'talker', { x: 270, y: FLOOR, s: .9 }).live(D).sleep(-1, tWake).hop(tWake, 16).flash(tWake + .1).face(tWake + .1, 'happy').face(tWake + 1.4, 'smile').eyes(tWake + .3, .8, -.3);
+    const lines = [CMD, ...CAPTURED.runTalker.slice(1).map(shortTs)], nOut = lines.length - 1;
+    const term = termPanel(p, lines, { x: 600, y: 60, w: 960, rows: 7, size: 26, title: WS_HOME });
+    termAt(term, lines, [[.3, 0, true], [tWake - .15, 1], ...[...Array(nOut)].map((_, i) => [tOut + i / SHOWN, 2 + i])], D);
+    for (let i = 0; i < nOut; i++) tk.flash(tOut + i / SHOWN);
+    const tEnd = tOut + nOut / SHOWN;
+    slowBadge(p, [[tOut - .2, tEnd + .2, TALK_RATE / SHOWN]], { xr: 1584, y: 852 });
+    // this one line (這一行指令): it lifts out as a card; how did it find talker (是怎麼找到 talker)? an arrow and a ?
+    const card = cmdCard(p, CMD); put(card, { x: 1080, y: 500 }); popIn(card, m('cmd'));
+    tw(card.hiPkg, { o: 1 }, m('cmd', .6), .3); tw(card.hiExe, { o: 1 }, m('cmd', .8), .3);
+    const [bx, by] = tk.bulb(), arc = curveArrow(p, [1080 - card.w / 2 - 10, 500], [700, 330], [bx + 30, by - 10], { color: ROOMS.yellowDk, width: 6 });
+    arc.drawAt(m('how', .2), .9);
+    const ask = robotSay(p, '?', { x: 470, y: 330, to: [520, 412], size: 48, o: 0 }); popIn(ask, m('how', 1.1));
+    tk.eyes(m('how', .6), 1, -.2).to(m('how', .8), 'tiltR', .5);
+    // and Package not found (找不到 package), where it comes from
+    const err = termPanel(p, CAPTURED.runBeforeBuild, { x: 600, y: 600, w: 960, rows: 2, size: 26, title: WS_HOME, o: 0 });
+    err.show(2); fadeIn(err, m('err', -.2), .4);
+    tw(err.bar(1), { o: 1 }, m('err', .6), .3); put(err.bar(1), { 'c_fill': '#e0503f' });
+    const nf = pill(p, '找不到 package', null, { x: 1360, y: 570, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26, point: 12, px: -90 });
+    popIn(nf, m('err', 1.6));
+    pulse(ask, m('err', 5.2), 1.15);
+  }, { lead: false }],
+
+  ['src', 'src 和 package', (m, D) => {
+    const p = panel(0), cam = camera(p, D, SHOP_WIDE), w = cam.world, W = shopWorld(w, D, { built: false, board: null, talker: false, wire: false, jazzy: false });
+    put(W.prod, { o: 0 });
+    // the workspace (工作空間): its name over the hall, nothing in it but the bench
+    tw(W.banner.glow, { o: 1 }, .3, .4); tw(W.banner.glow, { o: 0 }, m('src', -.3), .4);
+    const ls = termPanel(p, CAPTURED.lsBefore, { x: 1150, y: 150, w: 380, rows: 2, size: 28, title: WS_HOME, o: 0 });
+    termAt(ls, CAPTURED.lsBefore, [[m('ws', -.5), 0, true], [m('ws', .6), 2]], D);
+    fadeIn(ls, m('ws', -.6), .3);
+    // only one folder (只有一個資料夾), called src: the bench's sign lights
+    tw(W.srcSign.glow, { o: 1 }, m('src'), .4); tw(ls.bar(1), { o: 1 }, m('src'), .3);
+    pulse(W.crate, m('src', 1.9), 1.06);   // your programs all go here (你寫的程式都放在這裡)
+    // a package, a folder (每個 package 一個資料夾): in on the bench; the real listing; its folder, the mat, w04_pubsub/
+    cam.to(BENCH_VIEW, m('pkg', -.6), 1.6, soft); tw(W.srcSign.glow, { o: 0 }, m('pkg', -.6), .4);
+    tw(ls, { o: 0 }, m('pkg', -.6), .4);
+    const TREE = wrapCols(CAPTURED.srcTree, 44);   // the find command is wider than the window: it wraps, as a terminal does
+    const find = termPanel(p, TREE, { x: 960, y: 30, w: 620, rows: TREE.length, size: 22, title: WS_HOME, o: 0 });
+    find.show(TREE.length); fadeIn(find, m('pkg', .2), .4);
+    const row = str => TREE.findIndex(l => l === `src/${PKG}/${str}`);
+    const lit = (r, t0, t1) => { tw(find.bar(r), { o: 1 }, t0, .3); if (t1) tw(find.bar(r), { o: 0 }, t1, .3); };
+    lit(TREE.indexOf(`src/${PKG}`), m('pkg', .6), m('xml', -.2));   // the package's folder (looked up by its text: the command above wraps)
+    pulse(W.mat.tab, m('pkg', .8), 1.15);
+    // three things matter most (三樣東西最重要): a number pops over each, one after another
+    const three = [[CARD_X, 448], [ORDER_X, 300], [CRATE.x + 150, 268]].map(([x, y], i) => {
+      const g = G(W.L.top, { x, y, o: 0 }); mk('circle', { r: 24, fill: ROOMS.ink, stroke: '#fffdf8', 'stroke-width': 4 }, g);
+      T(g, String(i + 1), { y: 10, size: 28, weight: 800, fill: '#fff', anchor: 'middle' }); popIn(g, m('pkg', 3.6 + .45 * i)); tw(g, { o: 0 }, m('xml', -.4), .3); return g;
+    });
+    // three things (三樣東西): package.xml, its name and what it uses (名字，和它用到哪些 package)
+    const label = (e, str, x, y) => { const pl = pill(W.L.top, str, null, { x, y, bg: SCREENS.slate, ink: '#e8e4da', size: 24, font: SHOP.mono, point: 12 }); return pl; };
+    const xmlL = label(W.card, 'package.xml', CARD_X, 428); popIn(xmlL, m('xml'));
+    pulse(W.card, m('xml', .2), 1.12); lit(row('package.xml'), m('xml'), m('setup', -.2));
+    const xml = codePanel(p, XML_SHOW, { x: 960, y: 490, w: 620, size: 22, title: 'package.xml', tint: '#e0762f', o: 0 });
+    fadeIn(xml, m('xml', .4), .4); tw(xml, { o: 0 }, m('setup', -.4), .3);
+    tw(xml.box(0, PKG_NAME), { o: 1 }, m('xml', 4.5), .3);   // as 名字 is said (the voice: xml+4.8)
+    pulse(W.card, m('xml', 4.6), 1.1); pulse(W.card, m('xml', 6.6), 1.06);   // the card on the bench says the same: its name, what it uses
+    tw(xml.row(0).bar, { o: 1 }, m('xml', 1.6), .3); tw(xml.row(0).bar, { o: 0 }, m('xml', 6), .3);   // the lines as they are read: the name, then
+    [1, 2].forEach(i => { tw(xml.row(i).bar, { o: 1 }, m('xml', 6.1), .3); tw(xml.row(i).bar, { o: 0 }, m('setup', -.5), .3); });   // what it uses
+    [1, 2].forEach(i => tw(xml.box(i, DEPENDS[i - 1]), { o: 1 }, m('xml', 6.4 + .3 * i), .3));   // 用到哪些 package (xml+6.4 to 8.4)
+    // setup.py: how this package is installed (怎麼安裝)
+    const setL = label(W.order, 'setup.py', ORDER_X, 282); popIn(setL, m('setup'));
+    pulse(W.order, m('setup', .2), 1.1); lit(row('setup.py'), m('setup'), m('code', -.2));
+    const setup = codePanel(p, SETUP_SHOW, { x: 960, y: 490, w: 620, size: 22, title: 'setup.py', tint: SHOP.wood, o: 0 });
+    fadeIn(setup, m('setup', .4), .4); tw(setup, { o: 0 }, m('code', -.4), .3);
+    SETUP_SHOW.forEach((l, i) => { if (l.trim() === '⋮') return; const t0 = m('setup', 1.3 + .75 * i); tw(setup.row(i).bar, { o: 1 }, t0, .25); tw(setup.row(i).bar, { o: 0 }, t0 + .9, .3); });   // how it is installed: line by line
+    // a folder with the package's own name (同名的資料夾), the programs in it (talker.py 這些程式)
+    pulse(W.crate, m('code', .3), 1.08);
+    CODE_FILES.forEach((f, i) => lit(row(`${PKG}/${f}`), m('code', 2.6 + .25 * i)));
+    lit(row(PKG), m('code', .4));
+    const same = pill(W.L.top, '和 package 同名', null, { x: CRATE.x, y: 612, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 24, point: 12, side: 'up' });
+    popIn(same, m('code', 1.4));
+    tw(W.crate.partAt(CODE_FILES.indexOf(TK_SCRIPT.file)).card, { y: -10 }, m('code', 4.4), .3, back);
+  }, { lead: false }],
+
+  ['build', 'colcon build', (m, D) => {
+    const p = panel(0), cam = camera(p, D, { x: 975, y: 430, z: .76 }), w = cam.world, W = shopWorld(w, D, { built: false, board: null, talker: false, wire: 0, jazzy: false });
+    // at the top of the workspace (在工作空間的最上層): the camera settles on the hall while its name lights
+    cam.to(SHOP_WIDE, 0, m('colcon', -.6), soft);
+    tw(W.banner.glow, { o: 1 }, .6, .4); tw(W.banner.glow, { o: 0 }, m('colcon', -.2), .4);
+    // colcon build: the machine arrives as it is named
+    put(W.prod, { o: 1 }); [W.machine, W.beltIn, W.beltOut].forEach(e => fadeIn(e, m('colcon', -1.4), .5));   // drawn in world coordinates: faded, not scaled
+    put(W.bin, { o: 0 }); put(W.clip, { o: 0 });
+    const term = termPanel(p, CAPTURED.colcon, { x: 330, y: 24, w: 930, rows: 5, size: 24, title: WS_HOME, o: 0 });
+    fadeIn(term, m('colcon', -1.6), .4);
+    const t0 = m('colcon', -.4), tRun = typeEnd(t0, CAPTURED.colcon[0], 70) + .15, RUN_S = 1.3, tDone = tRun + RUN_S;
+    termAt(term, CAPTURED.colcon, [[t0, 0, true], [tRun, 2], [tDone - .05, 3], [tDone + .1, 5]], D, { cps: 70 });
+    slowBadge(p, [[tRun - .1, tDone + 1.6, RUN_S / COLCON_S]], { xr: 1584, y: 852 });
+    // the bench's things ride up into the hopper; the gears turn; out come the offcuts, the log, the goods
+    const chips = [['#fffdf6', '#e0762f'], [SHOP.paper, SHOP.woodDk], [SHOP.wood, SHOP.woodDk]].map(([f, s]) => put(mk('rect', { x: -18, y: -13, width: 36, height: 26, rx: 5, fill: f, stroke: s, 'stroke-width': 3 }, W.L.top), { o: 0 }));
+    const A = [BENCH.x + BENCH.w - 10, BENCH.top - 26], B = W.machine.hopper;
+    const goods = [[W.tag, TAG_AT], [W.boxes[EXES[0]], [BOX_X.listener, WH.levels[1]]], [W.boxes[EXES[1]], [BOX_X.talker, WH.levels[1]]]];
+    const chute = W.machine.chute, land = i => tRun + .4 + i * .3;   // each good leaves the chute at land(i) and flies .75 s, one at a time
+    goods.forEach(([e], i) => { put(e, { o: 0 }); tw(e, { o: 1 }, land(i), .12); });   // the opacity is the tweens' (so a good can step back later)
+    clockRun(t => {
+      const run = t >= tRun && t < tDone, q = Math.max(0, Math.min(t, tDone) - tRun) * 1.6;
+      W.machine.run(q, run ? 1 : 0); W.beltIn.move(q * 60); W.beltOut.move(q * 60);
+      chips.forEach((c, i) => { const u = (t - (tRun - .5 + i * .18)) / .55; if (u < 0 || u > 1) return put(c, { o: 0, x: 0, y: 0 }); const [x, y] = lerpPt(A, B, u); put(c, { o: 1, x, y: y - 12 }); });
+      goods.forEach(([e, to], i) => {
+        const u = clamp01((t - land(i)) / .75);
+        if (u <= 0 || u >= 1) return put(e, { x: to[0], y: to[1] });
+        const [x, y] = lerpPt(chute, to, io(u)); put(e, { x, y: y - (i ? 110 : 70) * Math.sin(Math.PI * u) });   // the name tag on a low arc: it hangs under the warehouse's sign
+      });
+    }, D, { tail: true });
+    fadeIn(W.wh, tRun + .3, .5); fadeIn(W.bin, tRun + .35, .4); popIn(W.clip, tRun + .45, .4);
+    tw(W.bin.scraps, { o: 1 }, tRun + .7, .3); tw(W.clip.sheet, { o: 1 }, tRun + .9, .3);
+    // three new folders beside src (旁邊多了三個資料夾): the real ls
+    const ls = termPanel(p, CAPTURED.lsAfter, { x: 1280, y: 24, w: 290, rows: 5, size: 26, title: WS_HOME, o: 0 });
+    termAt(ls, CAPTURED.lsAfter, [[m('three', -.4), 0, true], [m('three', .4), 5]], D);
+    fadeIn(ls, m('three', -.5), .3);
+    const lsRow = n => CAPTURED.lsAfter.indexOf(n);
+    const name = (str, sub, x, y, t, color, side = 'down') => { const pl = pill(W.L.top, str, sub, { x, y, bg: color, size: 28, point: 14, side, font: SHOP.mono }); popIn(pl, t); return pl; };
+    // build: the intermediate files (中間檔); log: the records (紀錄); install: the finished goods (成品)
+    // as each is named, the others step back: first the bench and the machine, done with
+    const whAll = [W.wh, ...W.goods];
+    dim([W.bench, W.machine, W.beltIn, W.beltOut], m('three', .4), .45);
+    const bL = name('build/', '中間檔', BIN.x + BIN.w / 2, 640 - 40, m('b'), SHOP.steelDk);
+    tw(ls.bar(lsRow('build')), { o: 1 }, m('b'), .3); dim([W.clip, ...whAll], m('b', -.2), .4);
+    const lL = name('log/', '紀錄', CLIP.x, CLIP.y - 52, m('l'), SHOP.woodDk);
+    tw(ls.bar(lsRow('log')), { o: 1 }, m('l'), .3); pulse(W.clip, m('l', .2), 1.12); dim([W.clip], m('l', -.2), 1); dim([W.bin, bL], m('l', -.2), .4);
+    tw(ls.bar(lsRow('build')), { o: 0 }, m('l', -.2), .3); tw(ls.bar(lsRow('log')), { o: 0 }, m('i', -.2), .3);   // the listing's lit line follows the folder named
+    const iL = pill(W.L.top, 'install/', '成品', { x: 0, y: WH.top - 33, bg: '#3f8a4d', size: 28, point: 14, side: 'right', font: SHOP.mono });
+    put(iL, { x: WH.x + WH.w / 2 - W.wh.sign.w / 2 - 30 - iL.w / 2 }); popIn(iL, m('i'));   // left of the sign, as the next label will be
+    tw(ls.bar(lsRow('install')), { o: 1 }, m('i'), .3); tw(W.wh.sign.glow, { o: 1 }, m('i'), .4);
+    dim(whAll, m('i', -.2), 1); dim([W.clip, lL], m('i', -.2), .4);
+    // ros2 run looks only in install (只看 install): the others step back
+    [W.bin, W.clip, bL, lL].forEach(e => tw(e, { o: .3 }, m('only', .2), .5));
+    [ls.bar(lsRow('build')), ls.bar(lsRow('log'))].forEach(e => tw(e, { o: 0 }, m('only'), .3));
+    const only = pill(W.L.top, `${RUN} 只看 install`, null, { x: 0, y: WH.top - 33, bg: ROOMS.yellow, ink: ROOMS.ink, size: 30, font: UI, point: 14, side: 'right' });
+    put(only, { x: WH.x + WH.w / 2 - W.wh.sign.w / 2 - 30 - only.w / 2 });
+    tw(iL, { o: 0 }, m('only'), .3); popIn(only, m('only', .3));
+    cam.to({ x: 1210, y: 470, z: .98 }, m('only', .4), D - m('only', .4), soft);   // towards the only place ros2 run looks
+  }, { lead: false }],
+
+  ['entry', 'console_scripts', (m, D) => {
+    const p = panel(0), cam = camera(p, D, SHOP_WIDE), w = cam.world, W = shopWorld(w, D, { board: null, talker: false, wire: 0, jazzy: false });
+    dim([W.bin, W.clip], -1, .3, 0); put(W.banner, { o: 0 });   // not talked about here (the code panel lies over the name)
+    // what is in the goods? setup.py, its console_scripts
+    tw(W.wh.sign.glow, { o: 1 }, .3, .4); tw(W.wh.sign.glow, { o: 0 }, m('cs', -1), .4);
+    const code = codePanel(p, CS_LINES, { x: 30, y: 24, w: 760, size: 24, title: 'setup.py', tint: SHOP.wood, o: 0 });
+    fadeIn(code, m('cs', -2.4), .4); pulse(W.order, m('cs', -2.4), 1.1);
+    const csRow = CS_LINES.findIndex(l => l.includes('console_scripts')), tkRow = CS_LINES.findIndex(l => l.includes(TK_SCRIPT.line)), lsRowI = CS_LINES.findIndex(l => l.includes(LS_SCRIPT.line));
+    tw(code.box(csRow, 'console_scripts'), { o: 1 }, m('cs'), .3);
+    tw(W.order.row(5), { o: 1 }, m('cs'), .3);
+    // talker's line: the executable's name talker, then talker.py (w04_pubsub.talker), then main
+    tw(code.row(tkRow).bar, { o: 1 }, m('line'), .3);
+    const bName = code.box(tkRow, EXE), bMod = code.box(tkRow, TK_SCRIPT.module), bFn = code.box(tkRow, TK_SCRIPT.func);
+    // each part lights as the voice says it: talker (line+2.2), talker.py (line+5.8), main (line+8.7)
+    tw(bName, { o: 1 }, m('line', 1.4), .3); tw(bMod, { o: 1 }, m('line', 5.6), .3); tw(bFn, { o: 1 }, m('line', 8.4), .3);
+    pulse(W.boxes[EXE], m('line', 2.6), 1.12);   // 名字叫 talker 的執行檔: the box of that name on the shelf
+    const rowY = code.row(tkRow).y + 26, x0 = code.x + 18;
+    const at = s => x0 + screensWidth(CS_LINES[tkRow].slice(4, CS_LINES[tkRow].indexOf(s)), code.size) + screensWidth(s, code.size) / 2;
+    const under = (str, x, t) => { const pl = pill(p, str, null, { x, y: code.y + code.h + 28, bg: ROOMS.yellow, ink: ROOMS.ink, size: 24, point: 12, side: 'up', px: 0 }); put(pl, { x }); popIn(pl, t); return pl; };
+    const unders = [under('執行檔的名字', at(EXE), m('line', 1.6)), under(TK_SCRIPT.file, at(TK_SCRIPT.module), m('line', 5.8)), under('函式', at(TK_SCRIPT.func), m('line', 8.6))];
+    unders.forEach(e => tw(e, { o: 0 }, m('lis', -.3), .3));
+    const plugT = W.partOf(TK_SCRIPT.file).plug; popIn(plugT, m('line', 8.6)); pulse(W.partOf(TK_SCRIPT.file).card, m('line', 6), 1.1);
+    // colcon build makes, from this line, a small program called talker in install (做出一支叫 talker 的小程式): in on the
+    // lib shelf, its name readable; the machine stamps the box out again
+    const tMake = m('make', .3);
+    cam.to(SHELF_VIEW, m('make', -.4), 1.4);
+    const libL = W.wh.level(1).label; tw(libL, { o: 1 }, m('make', 1.2), .4); tw(libL, { o: 0 }, m('run', -.8), .4);
+    dim([W.bench], m('make', -.4), .45); dim([W.bench], m('run', -.8), 1);
+    clockRun(t => { const u = t - tMake, on = u >= 0 && u < 1.2; W.machine.run(Math.max(0, Math.min(u, 1.2)) * 1.6, on ? 1 : 0); W.beltOut.move(Math.max(0, Math.min(u, 1.2)) * 90); }, D, { tail: true });
+    const boxT = W.boxes[EXE], [bx, by] = [BOX_X.talker, WH.levels[1]], C = ROBOT.talker;
+    const ghost = shopBox(W.L.top, { x: bx, y: by, name: EXE, color: C.body, dark: C.dark, light: C.light, ...BOX, o: 0 });   // the same box, stamped out again
+    clockRun(t => { const u = (t - tMake - .5) / .8; if (u < 0 || u >= 1) return put(ghost, { o: 0, x: bx, y: by }); const [x, y] = lerpPt(W.machine.chute, [bx, by], io(u)); put(ghost, { o: .85, x, y: y - 110 * Math.sin(Math.PI * u) }); }, D, { tail: true });
+    pulse(boxT, tMake + 1.3, 1.15);
+    // the real ls: in the close shot at the bottom left, over the machine's foot (not talked about), its last line above
+    // the captions' band (y 726 down); as the camera pulls out it moves to the top right, over the wall above the warehouse
+    const lsI = termPanel(p, CAPTURED.installLib, { x: 30, y: 596, w: 600, rows: 3, size: 24, title: WS_HOME, o: 0 });
+    lsI.show(3); fadeIn(lsI, m('make', 3), .4); tw(lsI.bar(1 + EXES.indexOf(EXE)), { o: 1 }, m('make', 4.4), .3);
+    tw(lsI, { x: 850, y: -572 }, m('run', -1.2), 1.4);
+    dim([W.machine, W.beltIn, W.beltOut], m('make', 2.8), .1); dim([W.machine, W.beltIn, W.beltOut], m('run', -1.2), 1);   // under the ls in the close shot; back in the wide one
+    const exeL = pill(W.L.top, `執行檔 ${EXE}`, null, { x: BOX_X.talker, y: WH.levels[1] - BOX.h - 46, bg: ROBOT.talker.body, size: 28, point: 14 });
+    popIn(exeL, m('make', 2.2));   // over the box, its pointer on the lid: inside the frame in the close shot and the wide one
+    // running it runs talker's main (執行它，就是執行 talker 的 main): out again to see its wire all the way to main, a spark
+    // from the pressed box along it to main
+    cam.to(SHOP_WIDE, m('run', -1.2), 1.4);
+    const wT = W.wires[EXE]; draw(wT.line, m('run', -.8), 1.1);
+    const tPress = m('run', .6), tSpark = tPress + .3, SPARK = 1.3;
+    clockRun(t => { boxT.press(t >= tPress && t < tPress + .4 ? 1 : 0); const u = (t - tSpark) / SPARK; if (u < 0 || u > 1) return put(wT.spark, { o: 0, x: 0, y: 0 }); const [x, y] = wT.at(u); put(wT.spark, { o: 1, x, y }); }, D, { tail: true });
+    pulse(W.partOf(TK_SCRIPT.file).card, tSpark + SPARK, 1.15);
+    tw(exeL, { o: 0 }, m('lis', -.2), .3);
+    // listener, the same, with its own line (有自己的一行): its wire, and its box runs its main the same way
+    tw(code.row(tkRow).bar, { o: 0 }, m('lis'), .3); [bName, bMod, bFn].forEach(e => tw(e, { o: 0 }, m('lis'), .3));
+    tw(code.row(lsRowI).bar, { o: 1 }, m('lis'), .3); tw(lsI.bar(1 + EXES.indexOf(LS_SCRIPT.name)), { o: 1 }, m('lis'), .3);
+    const wL = W.wires[LS_SCRIPT.name]; draw(wL.line, m('lis', .4), 1.1);
+    popIn(W.partOf(LS_SCRIPT.file).plug, m('lis', .2)); pulse(W.boxes[LS_SCRIPT.name], m('lis', .2), 1.12);
+    const tPressL = m('lis', 1.8), tSparkL = tPressL + .3;
+    clockRun(t => { W.boxes[LS_SCRIPT.name].press(t >= tPressL && t < tPressL + .4 ? 1 : 0); const u = (t - tSparkL) / SPARK; if (u < 0 || u > 1) return put(wL.spark, { o: 0, x: 0, y: 0 }); const [x, y] = wL.at(u); put(wL.spark, { o: 1, x, y }); }, D, { tail: true });
+    pulse(W.partOf(LS_SCRIPT.file).card, tSparkL + SPARK, 1.15);
+    // the stamping-out again and each run are drawn far slower than they take
+    slowBadge(p, [[tMake - .1, tMake + 1.7, null], [tPress - .1, tSpark + SPARK + .4, null], [tPressL - .1, tSparkL + SPARK + .4, null]], { line: '#f4efe6' });   // outlined: on the dark ceiling in the wide shot
+  }, { lead: false }],
+
+  ['q1', '小測驗', (m, D) => {
+    const p = panel(0), cam = camera(p, D, SHOP_WIDE), w = cam.world, W = shopWorld(w, D, { board: null, talker: false, jazzy: false });
+    dim([W.bin, W.clip, W.wires[LS_SCRIPT.name]], -1, .3, 0); put(W.banner, { o: 0 });
+    const code = codePanel(p, CS_LINES, { x: 30, y: 24, w: 760, size: 24, title: 'setup.py', tint: SHOP.wood });
+    put(code.row(CS_LINES.findIndex(l => l.includes(TK_SCRIPT.line))).bar, { o: 1 });
+    [TK_SCRIPT.file, LS_SCRIPT.file].forEach(f => put(W.partOf(f).plug, { o: 1 }));
+    S.q1 = { wire: W.wires[EXE], box: W.boxes[EXE], part: W.partOf(TK_SCRIPT.file).card };
+  }, { lead: false, ask: done => quiz(Q1_CARD, [{
+    id: 'c-entry-main', prompt: [bi(`執行 ${EXE} 這支執行檔時，會呼叫哪一個函式？`, `When the ${EXE} executable runs, which function is called?`)],
+    build: choice(Q1_OPTS.map((o, i) => [bi(o, Q1_OPTS_EN[i])]), Q1_OPTS.indexOf(Q1_RIGHT), Q1_WHY, Q1_OPTS.map(o => o === Q1_RIGHT ? null : Q1_WRONG[o]),
+      () => {   // the box is pressed and a spark runs along its wire to main
+        const { wire, box, part } = S.q1;
+        fxp(q => box.press(q < .25 ? 1 : 0), 0, .8, lin);
+        fxp(q => { const [x, y] = wire.at(q); put(wire.spark, { o: q < .98 ? 1 : 0, x, y }); }, .2, 1.3, lin);   // from the box to main
+        pulseFx(part, 1.15);
+      }),
+  }], done) }],
+
+  ['source', 'source', (m, D) => {
+    const p = panel(0), cam = camera(p, D, MID_VIEW), w = cam.world;
+    const lines = [CMD, NOT_FOUND, SOURCE_CMD], W = shopWorld(w, D, { board: 'before', term: lines, wire: 0, talker: false, jazzy: false });   // /opt/ros/jazzy's shelves are not talked about here: in the push-in only a cut edge of them showed
+    // the goods are made (成品做好了); then the terminal is what we look at, and the warehouse steps back until its
+    // address goes on the list
+    tw(W.wh.sign.glow, { o: 1 }, .2, .4); tw(W.wh.sign.glow, { o: 0 }, m('term'), .4);
+    dim([W.wh, ...W.goods], m('term'), .45); dim([W.wh, ...W.goods], m('list', 1.2), 1); dim([W.wh, ...W.goods], m('before', -.2), .12);   // all but gone under the echoes
+    // but the terminal you have open (你開著的這個終端機) does not know where they are
+    const lit = outline(W.L.top, W.tm, '#e0762f'); tw(lit, { o: 1 }, m('term'), .3);
+    put(W.bd, { o: 0 });
+    const ask = robotSay(W.L.top, '?', { x: TERM_W.x - 70, y: 220, to: [TERM_W.x - 8, 260], size: 44, o: 0 }); popIn(ask, m('term', 1.4)); tw(ask, { o: 0 }, m('nf', -.3), .3);
+    const tFloat = m("term", 1.9);   // (robotSay places it at its tail's tip, y 260)
+    clockRun(t => put(ask, { y: 260 - (t > tFloat ? 8 * Math.sin(2 * Math.PI * (t - tFloat) / 1.8) : 0) }), D, { tail: true });
+    // ros2 run now: Package not found
+    const tRun = m('nf', -.4), tSrc = m('cmd', -.4);
+    termAt(W.tm, lines, [[tRun, 0, true], [m('nf', 2.4), 2], [tSrc, 2, true], [typeEnd(tSrc, SOURCE_CMD) + .3, 3]], D);
+    put(W.tm.bar(1), { c_fill: '#e0503f' }); tw(W.tm.bar(1), { o: 1 }, m('nf', 2.6), .3); tw(W.tm.bar(1), { o: 0 }, tSrc, .3);
+    tw(W.tm.bar(2), { o: 1 }, m('cmd', 1.4), .3);
+    // a list called AMENT_PREFIX_PATH: the board; the workspace's install is added to it
+    fadeIn(W.bd, m('list', -.3), .4); tw(W.bd.title, { c_fill: '#ffffff' }, m('list', 4.6), .3);
+    // the address card comes out from behind the warehouse's sign (its right end short of the board), drops to the
+    // first slot's height, then slides in: no part of it crosses the terminal's lines or the board's title on the way
+    const tAdd = m('list', 1.6), s0 = slotY(W, 0), s1 = slotY(W, 1), y0 = WH.top - 30;
+    const xIn = W.bd.x + 16, x0 = Math.min(WH.x + WH.w / 2, W.bd.x - 40 - W.cards.ws.w);
+    clockRun(t => {
+      const u = clamp01((t - tAdd) / 1.1);
+      put(W.cards.ros, { y: s0 + (s1 - s0) * io(clamp01((t - tAdd) / .4)) });
+      put(W.cards.ws, { x: x0 + (xIn - x0) * io(clamp01((u - .15) / .85)), y: y0 + (s0 - y0) * io(clamp01(u / .3)) });
+    }, D, { tail: true });
+    put(W.cards.ws, { o: 0 }); tw(W.cards.ws, { o: 1 }, tAdd, .15);   // its opacity is the tweens' alone (the position is the clock's)
+    tw(W.wh.sign.glow, { o: 1 }, tAdd - .3, .3); tw(W.wh.sign.glow, { o: 0 }, tAdd + 1.2, .4);
+    // before source, only ROS itself (只有 ROS 本身); after, your install too (多了你的 install): the real echo
+    const bef = termPanel(p, CAPTURED.prefixBefore, { x: 30, y: 610, w: 430, rows: 2, size: 24, title: 'source 之前', titleSize: 24, o: 0 });   // their result lines above the captions' band (y 726-822, x 210-1390)
+    const aft = termPanel(p, CAPTURED.prefixAfter, { x: 480, y: 610, w: 1090, rows: 2, size: 24, title: 'source 之後', titleSize: 24, o: 0 });
+    bef.show(2); aft.show(2); fadeIn(bef, m('before'), .4); fadeIn(aft, m('after'), .4);
+    tw(W.cards.ws, { o: .2 }, m('before', .2), .3); tw(W.cards.ws, { o: 1 }, m('after', .2), .3);
+    const hiRos = outline(W.L.top, { x: W.bd.x + 16, y: s1 - 20, w: W.cards.ros.w, h: 40 }, ROOMS.yellowDk, 3); tw(hiRos, { o: 1 }, m('before', .3), .3); tw(hiRos, { o: 0 }, m('after'), .3);
+    const hiWs = outline(W.L.top, { x: W.bd.x + 16, y: s0 - 20, w: W.cards.ws.w, h: 40 }, '#3f8a4d', 3); tw(hiWs, { o: 1 }, m('after', .3), .3);
+    tw(aft.bar(1), { o: 1 }, m('after', .5), .3);
+    cam.to({ x: 2395, y: 405, z: 1.3 }, m('before', -.2), m('after', 1.6) - m('before', -.2), soft);   // a slow push in on the list while before and after are compared
+    tw(bef.bar(1), { o: 1 }, m('before', .7), .3); pulse(W.cards.ros, m('before', 1.4), 1.08); pulse(W.cards.ros, m('before', 3.2), 1.08);   // only ROS itself
+  }, { lead: false }],
+
+  ['newterm', '新的終端機', (m, D) => {
+    const p = panel(0), cam = camera(p, D, MID_VIEW), w = cam.world, W = shopWorld(w, D, { board: null, term: null, wire: 0, talker: false });
+    put(mk('rect', { x: 0, y: 0, width: 1600, height: 900, fill: '#f7f3ea', 'fill-opacity': .72 }, p), {});   // the hall steps back
+    dim(W.goods, -1, .1, 0);   // (its labels would lie under this beat's pills)
+    // the course's VM sources in every new terminal (每次開新的終端機，都會自動 source): the line .bashrc has
+    const bashrc = codePanel(p, [FILES.bashrc], { x: 230, y: 470, w: 1140, size: 22, title: '~/.bashrc', tint: '#3f8a4d', o: 0 });
+    fadeIn(bashrc, .8, .4); tw(bashrc.row(0).bar, { o: 1 }, m('auto'), .3);   // the course's VM (課程的虛擬機): its .bashrc
+    const pane = (x, title, lines, color) => {
+      const term = termPanel(p, lines, { x, y: 40, w: 700, rows: 3, size: 24, title, titleSize: 24, o: 0 });   // the title tells the two apart: read
+      const bd = shopBoard(p, { x: x + 30, y: 230, w: 640, title: 'AMENT_PREFIX_PATH', rows: 2, size: 22, o: 0 });
+      return { term, bd, lit: outline(p, term, color) };
+    };
+    // the new one (新開的): .bashrc puts the install on its list; ros2 run finds talker
+    const NEWL = [CMD, ...CAPTURED.runTalker.slice(1, 3).map(shortTs)], OLDL = [CMD, NOT_FOUND, SOURCE_CMD, CMD, ...CAPTURED.runTalker.slice(1, 3).map(shortTs)];
+    const nw = pane(820, '新開的終端機', NEWL, '#3f8a4d'), od = pane(80, 'build 之前就開著的終端機', OLDL, '#e0503f');
+    popIn(nw.term, 3.3); popIn(nw.bd, 3.6);   // as 每次開新的終端機 is said
+    const nRos = nw.bd.card(ROS_PREFIX, PREFIX_AFTER.indexOf(ROS_PREFIX), { fs: 20 }), nWs = nw.bd.card(WS_PREFIX, PREFIX_AFTER.indexOf(WS_PREFIX), { fs: 20 });
+    tw(nRos, { o: 1 }, 3.9, .3); tw(nWs, { o: 1 }, m('auto', .5), .4);
+    termAt(nw.term, NEWL, [[m('auto', 1.6), 0, true], [m('auto', 2.6), 2], [m('auto', 3.1), 3]], D);
+    // the old one (build 之前就開著的): opened when install did not exist yet (install 還不存在), so nothing was added
+    popIn(od.term, m('old', -.4)); popIn(od.bd, m('old', -.2)); tw(od.lit, { o: 1 }, m('old', .4), .3);
+    const oRos = od.bd.card(ROS_PREFIX, 0, { fs: 20 }), oWs = od.bd.card(WS_PREFIX, PREFIX_AFTER.indexOf(WS_PREFIX), { fs: 20 });
+    put(oRos, { o: 1, y: od.bd.slotAt(0)[1] });
+    const tAgain = m('fix', 3.9), tLines = typeEnd(tAgain, CMD) + .4;   // after sourcing it runs talker again
+    termAt(od.term, OLDL, [[-1, 2], [m('fix', .2), 2, true], [typeEnd(m('fix', .2), SOURCE_CMD) + .3, 3], [tAgain, 3, true], [tLines, 5], [tLines + .5, 6]], D);
+    // the gap on its list where the install would be: a dashed slot that pulses while the old terminal is the subject
+    const [gx, gy] = od.bd.slotAt(1), gap = G(p, { x: gx, y: gy, o: 0 });   // the empty row under /opt/ros/jazzy (round the card it read as a mark on jazzy)
+    mk('rect', { x: 0, y: -24, width: oWs.w, height: 48, rx: 4, fill: 'none', stroke: '#e0503f', 'stroke-width': 3, 'stroke-dasharray': '9 7' }, gap);
+    tw(gap, { o: 1 }, m('old', 1.6), .3); tw(gap, { o: 0 }, m('fix', 1.6), .3);
+    clockRun(t => { const u = t - m('old', 1.6); put(gap, { s: u > 0 ? 1 + .025 * Math.sin(2 * Math.PI * u / 1.3) : 1 }); }, D, { tail: true });
+    put(od.term.bar(1), { c_fill: '#e0503f' }); tw(od.term.bar(1), { o: 1 }, m('old', .8), .3); tw(od.term.bar(1), { o: 0 }, m('fix'), .3);
+    const test = FILES.bashrc.match(/^\[ [^\]]+ \]/)[0];
+    const testBox = bashrc.box(0, test, { stroke: '#e0503f' }); tw(testBox, { o: 1 }, m('why', .2), .3); tw(testBox, { o: 0 }, m('fix', .2), .3);
+    const none = pill(p, 'install 還不存在', null, { x: 400, y: 612, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26 });
+    popIn(none, m('why', .6)); tw(none, { o: 0 }, m('fix', .2), .3);
+    // source it yourself, or open a new terminal (自己 source 一次，或是開一個新的終端機)
+    const tAdd = typeEnd(m('fix', .2), SOURCE_CMD) + .5, o0 = od.bd.slotAt(0)[1], o1 = od.bd.slotAt(1)[1];
+    clockRun(t => { const u = io(clamp01((t - tAdd) / .5)), v = clamp01((t - tAdd - .45) / .3); put(oRos, { y: o0 + (o1 - o0) * u }); put(oWs, { o: v, y: o0 }); }, D, { tail: true });
+    tw(od.lit, { c_stroke: '#3f8a4d' }, tAdd + .3, .3);
+    const ok1 = checkMark(p, 745, 260), ok2 = checkMark(p, 1485, 260);
+    popIn(ok1, tLines + .2); popIn(ok2, m('fix', 3.6)); tw(nw.lit, { o: 1 }, m('fix', 3.6), .3);
+  }, { lead: false }],
+
+  ['find', 'ros2 run 怎麼找', (m, D) => {
+    const p = panel(0), cam = camera(p, D, MID_VIEW), w = cam.world, W = shopWorld(w, D, { board: 'after', term: [CMD], helper: true, wire: .3 }), { hp, tk } = W;
+    tk.sleep(-1, m('go', .4));
+    // ros2 run: the helper comes out of the terminal with the command card
+    termAt(W.tm, [CMD], [[.4, 0, true], [typeEnd(.4, CMD) + .3, 1]], D);
+    const tOut = typeEnd(.4, CMD) + .5, card = cmdCard(W.L.top, CMD);
+    tw(hp, { o: 1 }, tOut, .3); hp.hop(tOut, 22).flash(tOut + .1).face(tOut + .1, 'happy').face(tOut + 1.2, 'smile');
+    popIn(hp.tag, tOut + .4); tw(card, { o: 1 }, tOut + .2, .3); holdCard(hp, card, D, 'R');
+    // two steps (它分兩步): 1 the package, 2 the executable
+    const st1 = stepTag(p, 1, `找 package：${PKG}`, { x: 70, y: 52, color: ROOMS.violet, size: 28 }), st2 = stepTag(p, 2, `找執行檔：${EXE}`, { x: 70, y: 122, color: ROBOT.talker.body, size: 28 });
+    popIn(st1, 5.4); popIn(st2, 5.8);
+    // step 1: down the list, one install after another, is there a package of this name (有沒有叫這個名字的 package)?
+    tw(card.hiPkg, { o: 1 }, m('s1'), .3); tw(st2, { o: .45 }, m('s1'), .3);
+    hp.eyes(m('s1', -.2), -.3, -1).to(m('s1', .2), 'tiltL', .4);
+    const rowHi = outline(W.L.top, { x: W.bd.x + 16, y: slotY(W, 0) - 20, w: W.cards.ws.w, h: 40 }, ROOMS.violet, 3);
+    tw(rowHi, { o: 1 }, m('s1', 1), .3);
+    const toWh = dotted(W.L.top, [W.bd.x + 10, slotY(W, 0)], [WH.x + WH.w / 2 + 150, WH.top - 30]);
+    tw(toWh, { o: 1 }, m('s1', 1.6), .4);
+    const tWalk = m('s1', 2.6), tAt = hp.walk(tWalk, TAG_X, 260);
+    hp.to(tWalk - .2, 'holdR', .3).eyes(tWalk, -1, 0).eyes(tAt, -.6, -1);
+    dim([W.bd, W.tm], tAt, .4);   // the list is read; now the warehouse
+    dim([W.bd, W.tm], m('tag', -1), .12);   // in the close shot both are cut at the frame's edge: all but gone
+    // each package leaves a name tag in install: the empty file in resource (resource 資料夾裡那個空檔案)
+    cam.to(TAG_VIEW, m('tag', -1), 1.5);
+    tw(W.tag, { s: 1.12 }, m('tag'), .4, back);
+    const markL = W.wh.level(0).label; tw(markL, { o: 1 }, m('tag', .6), .4); tw(markL, { o: 0 }, m('tag', 2.1), .3);   // the shelf's path, readable this close, until the card goes up beside the tag (the ls at the foot keeps it)
+    dim(Object.values(W.boxes), m('tag', -.4), .35); dim(Object.values(W.boxes), m('s2', -.3), 1); dim([W.tag], m('s2', -.3), .35);
+    const MARK_L = wrapCols(CAPTURED.marker, 44);   // its command wraps in the window, as a terminal does
+    const ls1 = termPanel(p, MARK_L, { x: 965, y: 160, w: 615, rows: MARK_L.length, size: 22, title: WS_HOME, o: 0 });   // top right, over the faded list: clear of the helper, its card and the captions
+    dim([W.prod], m('tag', -1), .1);   // the machine side is not talked about
+    ls1.show(MARK_L.length); fadeIn(ls1, m('tag', .6), .4); tw(ls1.bar(MARK_L.length - 1), { o: 1 }, m('tag', 1.2), .3);
+    const fromL = pill(W.L.top, `${FILES.marker.path} 裝過來的`, null, { x: TAG_AT[0], y: 346, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0762f', size: 22, point: 10, font: SHOP.mono });   // between the sign and the tag's hook
+    popIn(fromL, m('tag', 4.2));
+    hp.to(m('tag', 2.2), 'raiseR', .5).eyes(m('tag', 2.2), -.8, -1);   // the card held up beside the tag
+    const same = dotted(W.L.top, [TAG_X + 70, 470], [TAG_AT[0] + 110, 420], '#3f8a4d'); tw(same, { o: 1 }, m('tag', 5.4), .3);
+    const ok1 = checkMark(W.L.top, TAG_AT[0] + 150, 420, 26); popIn(ok1, m('tag', 5.8)); tw(ok1, { o: 0 }, m('s2', -.3), .3);
+    hp.face(m('tag', 5.8), 'happy').hop(m('tag', 5.8), 10).face(m('tag', 7), 'smile').to(m('s2', -.8), 'holdR', .4);
+    hp.to(m('s2', 4.4), 'raiseR', .45).eyes(m('s2', 4.4), -1, -.4).to(m('go', -1.2), 'holdR', .4);   // its card up, the shelf's names in sight
+    // step 2: in its lib folder, the executable called talker (到它的 lib 資料夾裡，找叫 talker 的執行檔)
+    tw(st1, { o: .45 }, m('s2'), .3); tw(st2, { o: 1 }, m('s2'), .3); tw(card.hiPkg, { o: 0 }, m('s2'), .3); tw(card.hiExe, { o: 1 }, m('s2'), .3);
+    [rowHi, toWh, same, ls1, fromL].forEach(e => tw(e, { o: 0 }, m('s2', -.3), .3));
+    const ls2 = termPanel(p, CAPTURED.installLib, { x: 1050, y: 160, w: 530, rows: 3, size: 22, title: WS_HOME, o: 0 });
+    ls2.show(3); fadeIn(ls2, m('s2', 1.2), .4); tw(ls2.bar(1 + EXES.indexOf(EXE)), { o: 1 }, m('s2', 6), .3);
+    tw(W.wh.level(1).label, { o: 1 }, m('s2', .8), .4);
+    const tStep = m('s2', 2), tAt2 = hp.walk(tStep, PRESS_X, 200);
+    hp.eyes(tStep, 1, 0).eyes(tAt2, -1, -.3);
+    tw(W.boxes[EXE], { s: 1.1 }, m('s2', 6.4), .4, back);
+    // found it: it runs it (找到了，就執行它): the button, and talker wakes
+    hp.to(m('go', -.5), { ...ROBOT_POSE.holdR, L: ROBOT_POSE.pressL.L, head: -4 }, .4).to(m('go', 1.1), 'holdR', .5).face(m('go', .3), 'happy');
+    clockRun(t => W.boxes[EXE].press(t >= m('go') && t < m('go', .5) ? 1 : 0), D, { tail: true });
+    tk.hop(m('go', .4), 18).flash(m('go', .5)).face(m('go', .5), 'happy').eyes(m('go', .6), -.6, -.2);
+    const wT = W.wires[EXE]; tw(wT, { o: 1 }, m('go', -.2), .3);   // the press runs main down its wire
+    clockRun(t => { const u = (t - m('go', .1)) / 1.2; if (u < 0 || u > 1) return put(wT.spark, { o: 0, x: 0, y: 0 }); const [x, y] = wT.at(u); put(wT.spark, { o: 1, x, y }); }, D, { tail: true });   // from the box towards main
+    slowBadge(p, [[tOut, m('go', 1.2), null]], { xr: 790, y: 40 });   // the real lookup takes a fraction of a second; top centre: off talker's feet, over the wall in both shots
+    prog(() => {}, 0, D + 1.4);
+  }, { lead: false }],
+
+  ['errors', '兩種找不到', (m, D) => {
+    const p = panel(0), cam = camera(p, D, DISTRICT), w = cam.world, LINES = [CMD, NOT_FOUND, CMD2, NO_EXEC];
+    const W = shopWorld(w, D, { board: 'after', term: LINES, helper: true, wire: .3 }), { hp, tk } = W;
+    tk.sleep(-1);
+    // two messages, one for each step (正好對應這兩步)
+    const st1 = stepTag(p, 1, '找 package', { x: 70, y: 52, color: ROOMS.violet, size: 28, o: 1 }), st2 = stepTag(p, 2, '找執行檔', { x: 70, y: 122, color: ROBOT.talker.body, size: 28, o: 1 });
+    const msg = (str, y) => { const pl = pill(p, str, null, { x: 0, y, bg: SCREENS.term, ink: '#ffb4a8', size: 26, font: SHOP.mono }); put(pl, { x: 300 + pl.w / 2 }); return pl; };   // beside its step, clear of the terminal in the second shot
+    const m1 = msg(NOT_FOUND, 52), m2 = msg(NO_EXEC, 122);
+    // the two messages (兩個常見的錯誤訊息) wait faintly beside their steps, and each lights when it is named
+    put(m1, { o: 0 }); put(m2, { o: 0 }); tw(m1, { o: .35 }, 3, .5); tw(m2, { o: .35 }, 3.5, .5);
+    tw(m1, { o: 1 }, m('e1'), .3); pulse(m1, m('e1', .2), 1.08); tw(m2, { o: 1 }, m('e2'), .3); pulse(m2, m('e2', .2), 1.08);
+    pulse(st1, 6.6, 1.1); pulse(st2, 7.1, 1.1);   // 正好對應這兩步
+    tw(st2, { o: .45 }, m('e1'), .3); tw(st2, { o: 1 }, m('e2'), .3); tw(m1, { o: .45 }, m('e2'), .3);   // only the step being talked about stands out
+    // the first miss: this terminal has not sourced, so its list has only /opt/ros/jazzy on it. The helper goes there
+    const s0 = slotY(W, 0), s1 = slotY(W, 1), tGone = m('e1', -1.2), tBack = m('e2', -.6);
+    clockRun(t => {   // out: the card fades (.3 s), then jazzy slides up (.4 s); back: the reverse
+      const v = clamp01((t - tGone) / .7) - clamp01((t - tBack) / .7);
+      put(W.cards.ws, { o: 1 - clamp01(v / .43) }); put(W.cards.ros, { y: s1 + (s0 - s1) * io(clamp01((v - .43) / .57)) });
+    }, D, { tail: true });
+    const t1 = m('e1', -.9), tOut = typeEnd(t1, CMD) + .3;
+    const card1 = cmdCard(W.L.top, CMD), card2 = cmdCard(W.L.top, CMD2);
+    holdCard(hp, card1, D, 'R'); holdCard(hp, card2, D, 'R');
+    tw(hp, { o: 1 }, tOut, .3); tw(card1, { o: 1 }, tOut + .1, .3); put(hp.tag, { o: 1, s: 1 }); hp.hop(tOut, 18);
+    tw(card1.hiPkg, { o: 1 }, tOut + .5, .3);
+    const ourWh = [W.wh, ...W.goods, W.wires[EXE], W.wires[LS_SCRIPT.name]];
+    dim(ourWh, tGone + .2, .45);   // not on this list: out of the helper's way
+    const toJz = dotted(W.L.top, [W.bd.x + W.cards.ros.w + 24, s0], [JZ.x + JZ.w / 2 - 120, JZ.top - 40], SHOP.steelDk); tw(toJz, { o: 1 }, tOut + .6, .4);
+    const tA = hp.walk(tOut + 1, JZ_X, 300);
+    hp.eyes(tOut + .3, -.4, -1).eyes(tOut + 1, 1, 0).eyes(tA, .3, -1).to(tA, 'raiseR', .45);
+    // its name tags: rclpy, std_msgs, …: no w04_pubsub. Package not found: the package line turns red, the helper shrugs
+    const tNo = tA + 1.1;
+    tw(card1.missPkg, { o: 1 }, tNo, .3); hp.face(tNo, 'o').to(tNo, SHRUG_UP, .4).to(tNo + 1.6, 'raiseR', .4).face(tNo + 1.8, 'flat').eyes(tNo, -.2, .2);
+    W.jzTags.forEach((tg, i) => pulse(tg, tA + .1 + .25 * i, 1.08));
+    // maybe this terminal has not sourced (還沒 source), or nothing is built yet (還沒 build)
+    const why1 = pill(W.L.top, '還沒 source', null, { x: W.bd.x + W.bd.w / 2, y: W.bd.y + W.bd.h + 44, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 32, point: 14, side: 'up' });
+    popIn(why1, m('e1', 4.4));
+    const why2 = pill(W.L.top, '還沒 build', null, { x: WH.x + WH.w / 2, y: WH.top - 100, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 32 });
+    dim(ourWh, m('e1', 7.6), .15); popIn(why2, m('e1', 7.8));
+    // the second miss: a new run, a name that is not on the lib shelf. In on the shelf: the package is found, the
+    // executable is not
+    cam.to(E2_VIEW, m('e2', -.9), 1.4);
+    [why1, why2, toJz, card1].forEach(e => tw(e, { o: 0 }, m('e2', -.9), .3));
+    dim([W.wh, ...W.goods], m('e2', -.9), 1); dim([W.bd], m('e2', -.9), .15);   // cut at the frame's right edge in this shot: all but gone
+    tw(st1, { o: .45 }, m('e2'), .3);
+    const t2 = m('e2', -.9), tOut2 = typeEnd(t2, CMD2) + .3;
+    hp.walk(m('e2', -1.2), HOME_X, 1e5);   // it starts again from the terminal
+    tw(hp, { o: 0 }, m('e2', -1.4), .2); tw(hp, { o: 1 }, tOut2, .3); hp.face(tOut2 - .1, 'smile').hop(tOut2, 16).to(tOut2 - .2, 'holdR', 0);
+    tw(card2, { o: 1 }, tOut2 + .1, .3); tw(card2.hiPkg, { o: 1 }, tOut2 + .4, .3);
+    const tB = hp.walk(tOut2 + .8, PRESS_X, 320);
+    hp.eyes(tOut2 + .8, -1, 0).eyes(tB, -1, -.3);
+    tw(card2.hiPkg, { o: 0 }, tB, .3); tw(card2.hiExe, { o: 1 }, tB, .3); hp.to(tB, 'raiseR', .45);   // card up, clear of the shelf's path
+    // on the lib shelf, its path readable: listener, talker. No talker2
+    tw(W.wh.level(1).label, { o: 1 }, tB - .4, .4);
+    Object.values(W.boxes).forEach((bx, i) => pulse(bx, tB + .2 + .35 * i, 1.08));
+    const tNo2 = tB + 1.3;
+    tw(card2.missExe, { o: 1 }, tNo2, .3); hp.face(tNo2, 'o').to(tNo2, SHRUG_UP, .4).to(tNo2 + 1.6, 'raiseR', .4).face(tNo2 + 1.8, 'flat').eyes(tNo2, .2, .2);
+    termAt(W.tm, LINES, [[t1, 0, true], [tNo + .2, 2], [t2, 2, true], [tNo2 + .2, 4]], D);
+    // maybe setup.py does not have the name (setup.py 裡沒有這個名字), or setup.py was changed and not built again
+    const why3 = pill(W.L.top, `setup.py 裡沒有 ${EXE2}`, null, { x: 2470, y: 600, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 28 });
+    popIn(why3, m('e2', 5.4));
+    const why4 = pill(W.L.top, '改了 setup.py，沒重新 build', null, { x: 2470, y: 680, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 28 });
+    popIn(why4, m('e2', 8.6));
+    slowBadge(p, [[tOut, tNo + .6, null], [tOut2, tNo2 + .6, null]], { xr: 1584, y: 852, line: '#f4efe6' });   // each run's lookup, slowed down
+  }, { lead: false }],
+
+  ['symlink', '--symlink-install', (m, D) => {
+    const p = panel(0), cam = camera(p, D, SHOP_WIDE), w = cam.world, W = shopWorld(w, D, { board: null, talker: false, jazzy: false });
+    [TK_SCRIPT.file, LS_SCRIPT.file].forEach(f => put(W.partOf(f).plug, { o: 1 }));
+    dim([W.wires[LS_SCRIPT.name], W.clip], -1, .3, 0);
+    // the build was run with --symlink-install
+    const term = termPanel(p, CAPTURED.colcon, { x: 360, y: 24, w: 960, rows: 5, size: 24, title: WS_HOME, o: 0 });
+    term.show(1); fadeIn(term, m('sym', -1.4), .4);
+    const flag = '--symlink-install', fx0 = term.x + 14 + screensWidth(CAPTURED.colcon[0].slice(0, CAPTURED.colcon[0].indexOf(flag)), term.size);
+    const flagBox = put(mk('rect', { x: fx0 - 5, y: term.y + 34 + 10 - 4, width: screensWidth(flag, term.size) + 10, height: term.lineH, rx: 6, fill: 'none', stroke: SCREENS.str, 'stroke-width': 3.5 }, term), { o: 0 });
+    tw(flagBox, { o: 1 }, m('sym', .2), .3); tw(term, { o: 0 }, m('link', 1.2), .4);
+    // install's program reaches back to src by shortcuts (用捷徑連回 src): the shelf we have not looked at yet comes in,
+    // site-packages with its egg-link; the camera takes in the whole wire from the box back to the bench
+    cam.to(LINK_VIEW, m('link', -.8), 1.4);
+    tw(W.banner, { o: 0 }, m('link', -.8), .4); tw(W.banner, { o: 1 }, m('but', -.2), .4);   // in this shot only a cut edge of the workspace's name would show
+    const eggShelf = W.wh.level(2);
+    fadeIn(eggShelf.g, m('link', -.4), .4); fadeIn(W.egg, m('link', -.2), .4); tw(eggShelf.label, { o: 1 }, m('link', .2), .4); tw(eggShelf.label, { o: 0 }, m('edit', -.4), .3);
+    const wT = W.wires[EXE];
+    tw(wT.line, { 'a_stroke-width': 9, c_stroke: '#e0762f' }, m('link'), .4);
+    const tGo = m('link', .3), GO = 3.2;
+    clockRun(t => { const u = (t - tGo) / GO; if (u < 0 || u > 1) return put(wT.spark, { o: 0, x: 0, y: 0 }); const [x, y] = wT.at(u); put(wT.spark, { o: 1, x, y }); }, D, { tail: true });
+    // the spark passes the egg-link, then build/, then reaches the part in src: each lights as it goes by
+    const passAt = pt => { let best = 0, bd = 1e9; for (let k = 0; k <= 200; k++) { const [x, y] = wT.at(k / 200), d = Math.hypot(x - pt[0], y - pt[1]); if (d < bd) { bd = d; best = k / 200; } } return tGo + best * GO; };
+    pulse(W.egg, passAt([EGG_AT[0], EGG_AT[1] - 20]), 1.12); tw(W.bin.scraps, { y: -10 }, passAt(W.bin.lip), .3, back);
+    const back2 = pill(W.L.top, '用捷徑連回 src', null, { x: CRATE.x + 40, y: 262, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28, point: 14 }); popIn(back2, tGo + GO);   // under the terminal at the top
+    const LINK_A = wrapCols(CAPTURED.eggLink, 76), LINK_B = wrapCols(CAPTURED.buildLink, 76);   // wrapped at the window's width
+    // at the top (the colcon terminal is gone by link+1.6): clear of the captions' band at the foot
+    const egg = termPanel(p, LINK_A, { x: 300, y: 24, w: 1000, rows: 3, size: 20, title: WS_HOME, o: 0 });
+    const lnk = termPanel(p, LINK_B, { x: 300, y: 24, w: 1000, rows: 3, size: 20, title: WS_HOME, o: 0 });
+    egg.show(99); lnk.show(99); fadeIn(egg, m('link', 1.6), .3); tw(egg, { o: 0 }, m('link', 3.4), .2); fadeIn(lnk, m('link', 3.6), .3);   // one after the other
+    tw(egg.bar(LINK_A.length - 2), { o: 1 }, m('link', 1.6), .3); tw(lnk.bar(1), { o: 1 }, m('link', 4.2), .3); tw(lnk.bar(2), { o: 1 }, m('link', 4.2), .3);
+    // so a changed talker.py needs no new build: the next run is the new one (下次執行就是新的)
+    [egg, lnk, back2].forEach(e => tw(e, { o: 0 }, m('edit', -.4), .3));
+    const part = W.partOf(TK_SCRIPT.file), [px, py] = part.top;
+    const pen = G(W.L.top, { x: px + 50, y: py + 10, o: 0, r: 30 });
+    path(pen, 'M0 0L-14 -70L14 -70Z', { fill: '#f6cf55', stroke: '#c4951c', 'stroke-width': 3 }); path(pen, 'M-14 -70H14V-90H-14Z', { fill: '#e0762f', stroke: 'none' }); path(pen, 'M0 0L-4 -14H4Z', { fill: SHOP.ink, stroke: 'none' });
+    tw(pen, { o: 1 }, m('edit', .2), .3); prog(q => put(pen, { x: px + 30 + 30 * Math.sin(q * Math.PI * 6), y: py + 40 + 10 * q }), m('edit', .3), 1.4, lin); tw(pen, { o: 0 }, m('edit', 1.9), .3);
+    const changed = pill(W.L.top, '改過', null, { x: px + 70, y: py - 16, bg: ROOMS.yellow, ink: ROOMS.ink, size: 22 }); popIn(changed, m('edit', 1.6));   // a sticker on the card's top corner, clear of its name and of the wire across its face
+    const noBuild = pill(W.L.top, '不用重新 build', null, { x: MACH.x + MACH.w / 2, y: FLOOR - MACH.h - 130, bg: '#fffdf8', ink: ROOMS.ink, line: '#3f8a4d', size: 28 }); popIn(noBuild, m('edit', 2.6));
+    const tRun = m('edit', 5), boxT = W.boxes[EXE];
+    clockRun(t => { boxT.press(t >= tRun && t < tRun + .4 ? 1 : 0); }, D, { tail: true });
+    const tS2 = tRun + .3;
+    clockRun(t => { if (t < tGo + GO + .1) return; const u = (t - tS2) / 1.4; if (u < 0 || u > 1) return put(wT.spark, { o: 0, x: 0, y: 0 }); const [x, y] = wT.at(u); put(wT.spark, { o: 1, x, y }); }, D, { tail: true });
+    pulse(part.card, tS2 + 1.4, 1.15);
+    slowBadge(p, [[tRun - .1, tS2 + 1.6, null]]);   // the run, drawn far slower than it takes
+    const newRun = pill(W.L.top, '下次執行就是新的', null, { x: CRATE.x + 40, y: 262, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28, point: 14 }); popIn(newRun, tRun + .2);
+    // but a new program, or a changed setup.py or package.xml, needs a new build (還是要重新 build): out again, the bench
+    // and the machine both in the picture; the egg-link shelf steps back
+    cam.to(SHOP_WIDE, m('but', -.6), 1.4);
+    dim([eggShelf.g, W.egg], m('but', -.3), .25);
+    tw(W.wh.level(1).label, { o: 1 }, m('but', 1.4), .4);
+    [noBuild, newRun, changed].forEach(e => tw(e, { o: 0 }, m('but', -.3), .3));
+    tw(wT.line, { 'a_stroke-width': 5, c_stroke: '#3a3633' }, m('but', -.3), .4);
+    tw(W.order.extra, { o: 1 }, m('but', .4), .3); pulse(W.order, m('but', .4), 1.12); pulse(W.order, m('but', 4.8), 1.1);   // 新增一支程式; 改了 setup.py
+    const slot = newSlot(W); put(slot, { o: 0 }); tw(slot, { o: 1 }, m('but', 1.4), .4);   // (its scale is the clock's: it breathes at the end)
+    tw(W.card, { s: 1.1 }, m('but', 6.7), .3, back); tw(W.card, { s: 1 }, m('but', 7.5), .3);   // package.xml (but+6.6 to 8.9)
+    const again = pill(W.L.top, '還是要重新 build', null, { x: MACH.x + MACH.w / 2, y: FLOOR - MACH.h - 130, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 30 }); popIn(again, m('but', 9.2));   // as it is said
+    const arrow = curveArrow(W.L.top, [ORDER_X + 70, 360], [560, 140], [MACH.x + 60, FLOOR - MACH.h - 90], { color: '#e0503f', width: 6 });   // high: clear of __init__.py's name
+    arrow.drawAt(m('but', 9.3), .7);
+    const tWait = m('but', 10);   // from here the slot waits for a box and the machine's lamps blink: it has to run again
+    clockRun(t => { const u = Math.max(0, t - tWait); put(slot, { s: 1 + .05 * Math.sin(2 * Math.PI * u / 1.4) * Math.min(1, u) }); W.machine.run(0, t >= tWait && Math.floor(u / .6) % 2 === 0 ? 1 : 0); }, D, { tail: true });
+  }, { lead: false }],
+
+  ['q2', '小測驗', (m, D) => {
+    const p = panel(0), cam = camera(p, D, SHOP_WIDE), w = cam.world, W = shopWorld(w, D, { board: null, talker: false, jazzy: false });
+    [TK_SCRIPT.file, LS_SCRIPT.file].forEach(f => put(W.partOf(f).plug, { o: 1 }));
+    put(W.order.extra, { o: 1 }); put(W.wh.level(1).label, { o: 1 }); dim([W.bin, W.clip, W.wires[LS_SCRIPT.name]], -1, .3, 0); put(W.banner, { o: 0 });
+    const a = ENTRY_LINES.findIndex(l => l.includes('console_scripts')), b = ENTRY_LINES.findIndex(l => l.includes(LS_SCRIPT.line));
+    const lines = [...ENTRY_LINES.slice(a, b + 1), Q2_LINE, ENTRY_LINES[b + 1]];
+    const code = codePanel(p, lines, { x: 30, y: 24, w: 760, size: 24, title: 'setup.py（加了一行）', tint: SHOP.wood });
+    put(code.row(lines.indexOf(Q2_LINE)).bar, { o: 1, c_fill: '#e0503f' });
+    const slot = newSlot(W, 1);
+    const msg = termPanel(p, [NO_EXEC], { x: 960, y: 670, w: 420, rows: 1, size: 26, title: WS_HOME, o: 0 }); msg.show(1);   // under the lib shelf's label, above the captions
+    S.q2 = { slot, msg };
+  }, { lead: false, ask: done => quiz(Q2_CARD, [{
+    id: 'c-no-rebuild', prompt: [bi(`setup.py 加了一行，新增一支叫 ${Q2_EXE} 的程式，沒有重新 build，就直接執行 ${RUN} ${PKG} ${Q2_EXE}，會看到什麼？`,
+      `You add a line to setup.py for a new program called ${Q2_EXE}, and without building again you run ${RUN} ${PKG} ${Q2_EXE}. What do you see?`)],
+    build: choice(Q2_OPTS.map((o, i) => [bi(o, Q2_OPTS_EN[i])]), Q2_OPTS.indexOf(NO_EXEC), Q2_WHY, Q2_OPTS.map(o => o === NO_EXEC ? null : Q2_WRONG[o]),
+      () => { const { slot, msg } = S.q2; pulseFx(slot, 1.2); fx(msg, { o: 1 }, .2, .3); }),
+  }], done) }],
+
+  ['wrap', '整理', (m, D) => {
+    // the whole route on two screens: above, the bench, the machine and the warehouse; below, the warehouse, the list
+    // board, the helper and /opt/ros/jazzy (each camera has its own copy of the hall). Each step brings its part
+    // forward; the rest steps back
+    const p = panel(0);
+    // the lower screen ends at y 760, above the captions' band. Its two views: the shelf, the helper and talker whole (the
+    // board and the signs fully out); and step 3's, the board and both signs whole, the robots fully out below
+    const LOW = { x: 1800, y: 644, z: .8 }, LIST = { x: 2342, y: 340, z: .88 };
+    const top = camera(p, D, { box: [16, 74, 1568, 366], x: 975, y: 485, z: .82 }), bot = camera(p, D, { box: [16, 516, 1568, 244], ...LOW });
+    const A = shopWorld(top.world, D, { board: 'after', jazzy: false, talker: false, wire: .35 }), B = shopWorld(bot.world, D, { board: 'after', helper: true, wire: .35 });
+    [A, B].forEach(W => [TK_SCRIPT.file, LS_SCRIPT.file].forEach(f => put(W.partOf(f).plug, { o: 1 })));
+    put(A.srcSign, { o: 0 });   // above the top screen's edge: only a cut sliver of it would show
+    const { hp, tk } = B;
+    put(hp, { o: 1 }); put(hp.tag, { o: 1, s: 1 }); const card = cmdCard(B.L.top, CMD, { o: 1 }); holdCard(hp, card, D, 'R');
+    hp.walk(-1, PRESS_X, 1e5);
+    const topAll = [A.bench, A.prod, A.wh, ...A.goods], botAll = [B.wh, ...B.goods, B.bd, B.jz, hp, tk];
+    put(B.prod, { o: 0 });   // the machine is the top screen's: below, only a cut edge of it would show
+    dim([...topAll, ...botAll], .2, .35);
+    // 1: the code is written in src
+    const st = [[1, 250, 40, '程式寫在 src', ROOMS.ink], [2, 860, 40, 'colcon build：成品做到 install', SHOP.machDk],
+      [3, 980, 478, 'source：install 加進清單', ROOMS.violet], [4, 160, 478, `${RUN}：先找 package，再找執行檔`, ROBOT.talker.body]]
+      .map(([k, x, y, words, color]) => { const tag = stepTag(p, k, words, { x, y, color, size: 28 }); popIn(tag, m(`w${k}`, .1)); return tag; });
+    dim([A.bench], m('w1'), 1); pulse(A.crate, m('w1', .4), 1.08);
+    // 2: colcon build makes the goods in install: the machine turns, the warehouse comes forward
+    dim([A.bench], m('w2'), .35); dim([A.prod, A.wh, ...A.goods], m('w2'), 1); tw(A.wh.sign.glow, { o: 1 }, m('w2', .3), .3);
+    clockRun(t => { const u = t - m('w2', .3), on = u >= 0 && u < 1.4; A.machine.run(Math.max(0, Math.min(u, 1.4)) * 1.6, on ? 1 : 0); }, D, { tail: true });
+    // 3: source puts the install on the list: in on the board, its cards readable
+    dim([A.prod, A.wh, ...A.goods], m('w3'), .35); dim([B.bd], m('w3'), 1);
+    bot.to(LIST, m('w3', -.3), 1.2);
+    tw(B.bd.title, { c_fill: '#ffffff' }, m('w3', .3), .3); pulse(B.cards.ws, m('w3', .6), 1.06);
+    // 4: ros2 run finds the package, then the executable, and runs it: out to the helper at the shelf
+    bot.to(LOW, m('w4', -.3), 1.3);   // the shelf, the helper and talker, all whole
+    dim([B.bd], m('w4'), .35); dim([B.wh, ...B.goods, hp, tk], m('w4'), 1);
+    tw(card.hiPkg, { o: 1 }, m('w4', 1.4), .3); tw(card.hiPkg, { o: 0 }, m('w4', 2.6), .3); tw(card.hiExe, { o: 1 }, m('w4', 2.6), .3);
+    hp.to(m('w4', 2.8), { ...ROBOT_POSE.holdR, L: ROBOT_POSE.pressL.L, head: -4 }, .35).to(m('w4', 3.6), 'holdR', .4).face(m('w4', 3.2), 'happy');
+    clockRun(t => B.boxes[EXE].press(t >= m('w4', 3.1) && t < m('w4', 3.5) ? 1 : 0), D, { tail: true });
+    tk.sleep(-1, m('w4', 3.3)).hop(m('w4', 3.4), 14).flash(m('w4', 3.5)).face(m('w4', 3.5), 'happy');
+    slowBadge(p, [[m('w2', .1), null, null]], { xr: 790, y: 52 });   // the machine's run and the press are drawn slower than they take; top centre, between steps 1 and 2
+  }, { lead: false }],
+
+  ['final1', '本章練習', () => { panel(0); }, { ask: done => quiz(SCREEN, PRACTICE, done, bi('本章練習', 'Chapter practice')) }],
+  ['finish', '完成', () => { panel(0); }, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- questions: every option and every explanation from the sources ---------- */
+// Card texts are bi(Chinese, English): the card shows the English with English captions on (C)
+// q1: which function runs: the one after the colon of talker's console_scripts line
+const Q1_CARD = { x: 900, y: 24, w: 680, cls: 'side', maxH: 470 };
+const OTHER_DEF = TALKER_DEFS.find(d => d !== TK_SCRIPT.func && !d.startsWith('_'));   // on_timer
+const Q1_RIGHT = `${TK_SCRIPT.file} 裡的 ${TK_SCRIPT.func}`;
+const Q1_OPTS = [`${TK_SCRIPT.file} 裡的 ${OTHER_DEF}`, Q1_RIGHT, `setup.py 裡的 ${TK_SCRIPT.func}`];
+const Q1_OPTS_EN = [`${OTHER_DEF} in ${TK_SCRIPT.file}`, `${TK_SCRIPT.func} in ${TK_SCRIPT.file}`, `${TK_SCRIPT.func} in setup.py`];   // in Q1_OPTS's order
+if (SETUP_DEFS.includes(TK_SCRIPT.func) || !TALKER_DEFS.includes(TK_SCRIPT.func)) throw new Error('q1: the sources changed: check the options');
+const Q1_WHY = bi(`console_scripts 寫著 ${TK_SCRIPT.line}：等號左邊是執行檔的名字，右邊是「模組:函式」。${TK_SCRIPT.module} 就是 ${TK_SCRIPT.file}，冒號後面是 ${TK_SCRIPT.func}。`,
+  `console_scripts says ${TK_SCRIPT.line}: the executable's name, then "module:function". ${TK_SCRIPT.module} is ${TK_SCRIPT.file}, and after the colon comes ${TK_SCRIPT.func}.`);
+const Q1_WRONG = {
+  [Q1_OPTS[0]]: bi(`${OTHER_DEF} 是 timer 響的時候由 spin 呼叫的 callback。執行檔一開始呼叫的是冒號後面寫的 ${TK_SCRIPT.func}，由它建立 node、開始 spin。`,
+    `${OTHER_DEF} is the callback that spin calls when the timer goes off. The executable starts by calling ${TK_SCRIPT.func}, written after the colon, which creates the node and starts spin.`),
+  [Q1_OPTS[2]]: bi(`setup.py 裡沒有 ${TK_SCRIPT.func}：它只寫這個 package 怎麼安裝。冒號後面的 ${TK_SCRIPT.func} 是 ${TK_SCRIPT.module}（${TK_SCRIPT.file}）裡的函式。`,
+    `setup.py has no ${TK_SCRIPT.func}: it only says how this package is installed. The ${TK_SCRIPT.func} after the colon is a function in ${TK_SCRIPT.module} (${TK_SCRIPT.file}).`),
+};
+// q2: a new name in setup.py, no new build
+const Q2_CARD = { x: 900, y: 24, w: 680, cls: 'side', maxH: 470 };
+const Q2_OPTS = [NOT_FOUND, NO_EXEC, `${Q2_EXE} 照常執行`];
+const Q2_OPTS_EN = [NOT_FOUND, NO_EXEC, `${Q2_EXE} runs`];   // the real error lines stay as they are
+const Q2_WHY = bi(`第一步找得到 ${PKG}；第二步到 ${LIB_DIR} 找 ${Q2_EXE}：執行檔是 build 時照 setup.py 做出來的，沒有重新 build 就沒有 ${Q2_EXE}，所以是 ${NO_EXEC}。`,
+  `Step one finds ${PKG}; step two looks for ${Q2_EXE} in ${LIB_DIR}. Executables are made at build time, so there is no ${Q2_EXE} yet: ${NO_EXEC}.`);
+const Q2_WRONG = {
+  [NOT_FOUND]: bi(`${PKG} 已經 build、也 source 過，第一步找得到 package。找不到的是第二步：執行檔 ${Q2_EXE}。`,
+    `${PKG} has been built and sourced, so step one finds the package. What's missing is step two: the executable ${Q2_EXE}.`),
+  [Q2_OPTS[2]]: bi(`setup.py 只是工單：${Q2_EXE} 這支執行檔要 colcon build 照新的一行做出來，install 裡才會有。--symlink-install 只是連回 src 的 .py，不會自己做出新的執行檔。`,
+    `setup.py is only the work order: colcon build makes the ${Q2_EXE} executable from the new line. --symlink-install only links the .py files back to src; it makes no new executables.`),
+};
+
+/* ---------- chapter practice (full screen) ---------- */
+const PRACTICE = [
+  { id: 'p-source-fix', prompt: [bi(`剛 build 完，一個早就開著的終端機執行 ${RUN}，出現 ${NOT_FOUND}。最快的解法是？`,
+      `Right after a build, a terminal that was already open runs ${RUN} and gets ${NOT_FOUND}. What's the quickest fix?`)],
+    build: choice([[SOURCE_LINE], [bi('再 colcon build 一次', 'Run colcon build again')], [bi('修改 setup.py', 'Edit setup.py')]], 0,
+      bi(`install 已經建好了，只是這個終端機的清單（AMENT_PREFIX_PATH）上還沒有它。在 ${WS_HOME} 執行 ${SOURCE_LINE}（或開一個新的終端機），清單就會多出 install。`,
+        `install is already built; it just isn't on this terminal's list (AMENT_PREFIX_PATH) yet. Run ${SOURCE_LINE} in ${WS_HOME} (or open a new terminal), and install joins the list.`),
+      [null, bi(`install 已經在了：再 build 一次，這個終端機的清單還是沒有它，照樣找不到。缺的是 source。`,
+        `install is already there: building again doesn't put it on this terminal's list, so it still isn't found. What's missing is source.`),
+        bi(`${NOT_FOUND} 是第一步（找 package）就沒找到，跟 setup.py 寫了哪些執行檔無關；這個終端機只是還沒 source。`,
+          `${NOT_FOUND} means step one (finding the package) failed; it has nothing to do with which executables setup.py lists. This terminal just hasn't sourced yet.`)]) },
+  { id: 'p-build-where', prompt: [bi('colcon build 要在哪一個資料夾執行？', 'In which folder do you run colcon build?')],
+    build: choice([[`${WS_HOME}/src`], [WS_HOME], [`${WS_HOME}/src/${PKG}`]], 1,   // the right one second (the engine does not shuffle; p-source-fix's is first)
+      bi(`在工作空間的最上層（${WS_HOME}）執行：build、install、log 會做在 src 旁邊，${WS_HOME}/install 就是 source 和自動 source 的那一個。`,
+        `At the top of the workspace (${WS_HOME}): build, install and log are made next to src, and ${WS_HOME}/install is the one you source (a new terminal sources it automatically).`),
+      [bi(`在 src 裡執行，build、install、log 會做在 src 裡面（${WS_HOME}/src/install），不是 source 的 ${WS_HOME}/install。`,
+        `If you run it in src, build, install and log are made inside src (${WS_HOME}/src/install), not the ${WS_HOME}/install you source.`), null,
+        bi(`在 package 資料夾裡執行，install 會做在 ${WS_HOME}/src/${PKG}/install，不是 source 的 ${WS_HOME}/install。`,
+          `If you run it in the package folder, install is made in ${WS_HOME}/src/${PKG}/install, not the ${WS_HOME}/install you source.`)]) },
+];
+boot();
+</script>
+</body>
+</html>

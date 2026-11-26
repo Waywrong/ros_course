@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>訊息怎麼從 talker 到 listener</title>
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/rooms.js"></script>
+<script src="../lib/robots.js"></script>
+<script src="../lib/screens.js"></script>
+<script src="captured.js"></script>
+<script src="audio/zh-TW/timings.js"></script>
+<script src="captions.en.js"></script>
+<script>
+'use strict';
+// Chapter 4: how a message gets from talker to listener. The opening beats:
+// open: the two terminals we ran in class, talker printing hello world ten times a second and listener printing
+// I heard; how does a line get across? Slow it down: the terminals open like doors and the camera goes through the
+// screen into the computer. pubsub: inside, talker's room and listener's room with a wall between; the nodes, their
+// names, the topic's tube and its plate /chatter, talker's publisher and listener's subscription fitted on its ends,
+// one message (a yellow slip stamped String) travelling in slow motion, opened to show its one field data, then the
+// point: neither can see the other, both only know the topic's name and type.
+const CHAPTER = { number: 4, title: '訊息怎麼從 talker 到 listener', minutes: 6, language: 'zh-TW', next: '../ch05/' };
+
+/* ---------- the real terminal output and the course's code (captured.js, generated from the real captures) ---------- */
+const shortTs = line => line.replace(/\[\d+\.\d+\]/, '[…]');   // the page shortens the timestamp to […]
+// the 30 s run: talker printed hello world 0..295, listener heard 1..295 (its first was 1)
+const termLine = (who, n) => shortTs(CAPTURED[who][Math.min(CAPTURED[who].length - 1, who === 'talker' ? n + 1 : n)]);
+// a line of talker.py or listener.py as in the file, its trailing comment left out. Only the code is searched: each
+// file opens with a docstring that compares ROS 1 and ROS 2 and quotes the same calls
+const codeBody = file => { const L = CODE[file], a = L.findIndex(l => l.trim().startsWith('"""')), b = L.findIndex((l, i) => i > a && l.includes('"""')); return L.slice(b + 1); };
+const codeLine = (file, needle) => {
+  const line = codeBody(file).find(l => l.includes(needle));
+  if (!line) throw new Error(`codeLine: no line with "${needle}" in ${file}.py`);
+  return line.replace(/\s+#.*$/, '');
+};
+// Lines talker has printed by beat time t: ten a second from START (the timer's 0.1 s), easing to SLOW_RATE over RAMP
+// once [[slow]] (ts) is said. A pure function of t; listener prints the same numbers from 1 (its first was 1).
+const RATE = 10, START = .4, SLOW_RATE = .7, RAMP = 1.2;
+const printedBy = (t, ts) => {
+  if (t < START) return 0;
+  let n = RATE * (Math.min(t, ts) - START);
+  if (t > ts) {
+    const u = Math.min(t - ts, RAMP);
+    n += RATE * u - (RATE - SLOW_RATE) * u * u / (2 * RAMP);
+    if (t > ts + RAMP) n += SLOW_RATE * (t - ts - RAMP);
+  }
+  return Math.floor(n) + 1;
+};
+// The message followed inside is the next one talker sends after the open beat's last line: its number read from that
+// real line of the capture.
+const NEXT_N = +CAPTURED.talker[printedBy(TIMINGS.open.dur, TIMINGS.open.marks.slow) + 1].match(/hello world (\d+)$/)[1];
+
+/* ---------- layout ---------- */
+const MONO = ROOMS.mono;
+const SCR = [300, 100, 1000, 562];                        // open: the monitor's screen (x, y, w, h) in the desk world
+const TERM = { w: 470, y: 112, h: 538, bar: 40, rows: 20, pad: 14 }, TERM_X = { talker: 314, listener: 816 };
+const ROW_H = (TERM.h - TERM.bar - 20) / TERM.rows;
+const TERM_FS = (() => { ctx2d.font = `20px ${MONO}`; const w = ctx2d.measureText(termLine('listener', 295)).width; return Math.min(16, 20 * (TERM.w - 2 * TERM.pad) / w); })();
+const rowY = i => TERM.y + TERM.bar + 10 + (i + .74) * ROW_H;
+// open's push shows the inside as one baked picture (baked from this page; bake it again after a change to
+// rooms.js or robots.js), decoded at load so its first frame does not stall
+const ROOMS_BAKED = '../img/ch04-rooms@2x.png';
+{ const im = new Image(); im.src = ROOMS_BAKED; if (im.decode) im.decode().catch(() => {}); }
+const INSIDE = { x: 480, y: 201, s: .4 };                  // the rooms behind the screen: the stage at .4, centred on it
+const DESK_VIEW = { x: 800, y: 450, z: 1 }, SCREEN_VIEW = { x: 800, y: 381, z: 1.42 }, INSIDE_VIEW = { x: 800, y: 381, z: 1 / INSIDE.s };
+const FLOOR = ROOMS.floor, ROB_S = .9, TK_X = 200, LS_X = 1400;
+const TUBE = { x0: 400, x1: 1200, y: 630, h: 96 };
+const WIDE = { x: 800, y: 450, z: 1 }, CLOSE = { x: 515, y: 600, z: 1.95 };   // close: talker, its mouth, the slip, the plate
+const X_STOP = 586, X_CREEP = 596;                        // where the slip is looked at, opened and closed
+
+/* ---------- small helpers ---------- */
+const clamp01 = q => Math.max(0, Math.min(1, q));
+const popIn = (e, t, d = .45) => { put(e, { o: 0, s: .6 }); tw(e, { o: 1, s: 1 }, t, d, back); return e; };
+const fadeIn = (e, t, d = .4) => { put(e, { o: 0 }); tw(e, { o: 1 }, t, d); return e; };
+// A rounded label: main word bold, an optional second word lighter, and a pointer `point` long on one side
+// ('down', 'up', 'left' or 'right'), `px` from that side's middle.
+function pill(p, main, sub, { x, y, bg, ink = '#fff', size = 28, point = 0, side = 'down', px = 0, line } = {}) {
+  const g = G(p, { x, y, o: 0 });
+  ctx2d.font = `700 ${size}px ${UI}`; const w1 = ctx2d.measureText(main).width;
+  ctx2d.font = `500 ${size * .82}px ${UI}`; const w2 = sub ? ctx2d.measureText(' ' + sub).width : 0;
+  const w = w1 + w2 + size * 1.1, h = size * 1.55, k = side === 'up' ? -1 : 1, attrs = { fill: bg, stroke: line || 'none', 'stroke-width': 3 };
+  const sx = side === 'right' ? -1 : 1;   // left and right: the same pointer, mirrored
+  if (point) path(g, side === 'left' || side === 'right' ? `M${sx * (-w / 2 + 4)} ${px - 12}L${sx * (-w / 2 - point)} ${px}L${sx * (-w / 2 + 4)} ${px + 12}Z`
+    : `M${px - 13} ${k * (h / 2 - 2)}L${px} ${k * (h / 2 + point)}L${px + 13} ${k * (h / 2 - 2)}Z`, attrs);
+  mk('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, ...attrs }, g);
+  if (point && line) path(g, side === 'left' || side === 'right' ? `M${sx * (-w / 2 + 5.5)} ${px - 10}V${px + 10}` : `M${px - 11} ${k * (h / 2 - 1.5)}H${px + 11}`, { stroke: bg, 'stroke-width': 4 });
+  const t = put(mk('text', { 'font-size': size, 'font-weight': 700, 'font-family': UI, fill: ink }, g), { x: -w / 2 + size * .55, y: size * .36 });
+  t.textContent = main; t.style.whiteSpace = 'pre';
+  if (sub) { const ts = mk('tspan', { 'font-size': size * .82, 'font-weight': 500 }, t); ts.textContent = ' ' + sub; }
+  return Object.assign(g, { w });
+}
+
+// The rooms and both robots, idle, in layers: set, tube, what hands hold, the cast, labels on top.
+function stage(w, D, { still = false } = {}) {   // still: robots drawn once as at t = 0 (pubsub's first frame), no per-frame writes
+  const L = { set: G(w), tube: G(w), hold: G(w), cast: G(w), top: G(w) }, how = still ? { still: 0 } : {};
+  const set = rooms(L.set);
+  const tk = robot(L.cast, 'talker', { x: TK_X, y: FLOOR, s: ROB_S }).eyes(0, .6, .2).live(D, how);
+  const ls = robot(L.cast, 'listener', { x: LS_X, y: FLOOR, s: ROB_S }).eyes(0, -.6, .2).live(D, how);
+  return { L, set, tk, ls };
+}
+
+/* ---------- open: the desk, the monitor, two terminals ---------- */
+function deskScene(w) {
+  mk('rect', { x: -200, y: -100, width: 2000, height: 1100, fill: '#f3ebdd' }, w);    // the classroom wall
+  mk('rect', { x: -200, y: 540, width: 2000, height: 240, fill: '#ece1cf' }, w);
+  mk('rect', { x: -200, y: 532, width: 2000, height: 9, fill: '#dccdb4' }, w);
+  path(w, 'M70 770H1530L1600 852H0Z', { fill: '#d9b27c', stroke: 'none' });             // the desk, seen a little from above
+  path(w, 'M80 775H1520', { stroke: '#e4c08e', 'stroke-width': 6 });
+  mk('rect', { x: 0, y: 852, width: 1600, height: 60, fill: '#b98a52' }, w);
+  mk('rect', { x: 770, y: 688, width: 60, height: 74, fill: '#57514b' }, w);            // the monitor's stand
+  path(w, 'M664 782Q664 760 694 760H906Q936 760 936 782Z', { fill: '#47423e', stroke: 'none' });
+  path(w, 'M556 796H1044L1066 842H534Z', { fill: '#efe9df', stroke: '#bfb6a8', 'stroke-width': 3 });   // keyboard
+  let keys = ''; [808, 822].forEach(y => { for (let x = 570; x < 1036; x += 26) keys += `M${x} ${y}h14`; });
+  path(w, keys + 'M680 834H920', { stroke: '#cfc6b8', 'stroke-width': 7 });
+  path(w, 'M1150 812Q1150 790 1172 790Q1194 790 1194 812Q1194 836 1172 836Q1150 836 1150 812Z', { fill: '#efe9df', stroke: '#bfb6a8', 'stroke-width': 3 });   // mouse
+  const mug = G(w, { x: 1330, y: 838 });                                                 // a mug
+  path(mug, 'M30 -52Q58 -52 58 -32Q58 -12 30 -14', { stroke: '#2f8f83', 'stroke-width': 9, fill: 'none' });
+  path(mug, 'M-32 -66H34L30 0H-28Z', { fill: '#3ca596', stroke: 'none' });
+  mk('rect', { x: -34, y: -70, width: 70, height: 10, rx: 4, fill: '#2f8f83' }, mug);
+}
+function bezel(p) {
+  const w = G(p), [x, y, ww, h] = SCR, b = 28, o = `M${x - b + 24} ${y - b}H${x + ww + b - 24}Q${x + ww + b} ${y - b} ${x + ww + b} ${y - b + 24}V${y + h + b - 24}Q${x + ww + b} ${y + h + b} ${x + ww + b - 24} ${y + h + b}H${x - b + 24}Q${x - b} ${y + h + b} ${x - b} ${y + h + b - 24}V${y - b + 24}Q${x - b} ${y - b} ${x - b + 24} ${y - b}Z`;
+  path(w, `${o}M${x} ${y}V${y + h}H${x + ww}V${y}Z`, { fill: '#3a3633', stroke: 'none', 'fill-rule': 'evenodd' });
+  mk('circle', { cx: x + ww / 2, cy: y + h + 14, r: 4, fill: '#9fd48a' }, w);
+  return w;
+}
+// The inside of the computer seen through the screen around the rooms: a few gold traces (revealed with the rooms).
+function screenTraces(w) {
+  const g = G(w, { o: 0 }), { x, y, s } = INSIDE, x1 = x + 1600 * s, y1 = y + 900 * s;
+  path(g, `M${SCR[0] + 30} ${y + 60}H${x - 40}L${x - 10} ${y + 90}H${x}M${SCR[0] + 50} ${y1 - 50}H${x - 60}L${x - 30} ${y1 - 20}H${x}` +
+    `M${SCR[0] + SCR[2] - 30} ${y + 80}H${x1 + 40}L${x1 + 10} ${y + 110}H${x1}M${SCR[0] + SCR[2] - 40} ${y1 - 70}H${x1 + 50}L${x1 + 20} ${y1 - 40}H${x1}` +
+    `M${x + 120} ${SCR[1] + 30}V${y}M${x1 - 160} ${SCR[1] + 20}V${y}M${x + 200} ${SCR[1] + SCR[3] - 24}V${y1}M${x1 - 120} ${SCR[1] + SCR[3] - 30}V${y1}`,
+  { stroke: '#8a7040', 'stroke-width': 3 });
+  mk('rect', { x: x - 6, y: y - 6, width: 1600 * s + 12, height: 900 * s + 12, rx: 10, fill: 'none', stroke: '#8a7040', 'stroke-width': 4 }, g);
+  return g;
+}
+// One terminal window, its rows rewritten from the beat clock whenever talker's line count changes.
+function terminal(p, who, D, ts) {
+  const x = TERM_X[who], C = ROBOT[who], g = G(p);
+  mk('rect', { x, y: TERM.y, width: TERM.w, height: TERM.h, rx: 10, fill: '#262321' }, g);
+  path(g, `M${x} ${TERM.y + TERM.bar}V${TERM.y + 10}Q${x} ${TERM.y} ${x + 10} ${TERM.y}H${x + TERM.w - 10}Q${x + TERM.w} ${TERM.y} ${x + TERM.w} ${TERM.y + 10}V${TERM.y + TERM.bar}Z`, { fill: '#3d3936', stroke: 'none' });
+  const title = T(g, 'Terminal', { x: x + TERM.w / 2, y: TERM.y + 27, size: 17, fill: '#b9b1a6', anchor: 'middle' });
+  const name = G(g, { o: 0 });
+  path(name, `M${x} ${TERM.y + TERM.bar}V${TERM.y + 10}Q${x} ${TERM.y} ${x + 10} ${TERM.y}H${x + TERM.w - 10}Q${x + TERM.w} ${TERM.y} ${x + TERM.w} ${TERM.y + 10}V${TERM.y + TERM.bar}Z`, { fill: C.body, stroke: 'none' });
+  T(name, C.name, { x: x + 18, y: TERM.y + 29, size: 25, weight: 700, fill: '#fff', font: MONO });
+  const note = G(g, { o: 0 });
+  T(note, who === 'talker' ? '每 0.1 秒印一行' : '跟著印出 I heard', { x: x + TERM.w - 92, y: TERM.y + 28, size: 18, weight: 600, fill: '#fff', anchor: 'end' });
+  [0, 1, 2].forEach(k => mk('circle', { cx: x + TERM.w - 62 + k * 21, cy: TERM.y + 20, r: 7, fill: k === 2 ? '#e8743b' : '#6b645d' }, g));
+  const outline = put(mk('rect', { x: x - 3, y: TERM.y - 3, width: TERM.w + 6, height: TERM.h + 6, rx: 12, fill: 'none', stroke: C.body, 'stroke-width': 6 }, g), { o: 0 });
+  const rows = [...Array(TERM.rows)].map((_, i) => T(g, '', { x: x + TERM.pad, y: rowY(i), size: TERM_FS, font: MONO, fill: '#ece6da' }));
+  const dim = put(mk('rect', { x: x + 4, y: TERM.y + TERM.bar + 2, width: TERM.w - 8, height: rowY(TERM.rows - 2) - TERM.y - TERM.bar + 4, fill: '#262321' }, g), { o: 0 });   // [[ask]]: the older rows step back
+  let last = -1;
+  clockRun(t => {
+    const c = printedBy(t, ts); if (c === last) return; last = c;
+    const k = who === 'talker' ? c : Math.max(0, c - 1), total = 1 + k, first = Math.max(0, total - TERM.rows);
+    rows.forEach((r, i) => {
+      const j = first + i, str = j >= total ? '' : j === 0 ? CAPTURED[who][0] : termLine(who, who === 'talker' ? j - 1 : j);
+      if (r.textContent !== str) r.textContent = str;
+    });
+  }, D);
+  return { g, title, name, note, outline, dim, x };
+}
+// The newest line on each side boxed where its hello world N sits, a dashed arc from one to the other that draws
+// dash by dash (reveal(q), q 0..1, a pure function of the beat clock), its head, and a ? on it. All parts start hidden.
+function askArc(p) {
+  const g = G(p), y = rowY(TERM.rows - 1);
+  ctx2d.font = `${TERM_FS}px ${MONO}`;
+  const box = who => {
+    const line = termLine(who, 150), i = line.indexOf('hello world'), x = TERM_X[who] + TERM.pad + ctx2d.measureText(line.slice(0, i)).width;
+    const wd = ctx2d.measureText('hello world 150').width;
+    const b = put(mk('rect', { x: x - 5, y: y - TERM_FS - 3, width: wd + 10, height: TERM_FS + 12, rx: 5, fill: ROOMS.yellow, 'fill-opacity': .22, stroke: ROOMS.yellow, 'stroke-width': 3 }, g), { o: 0 });
+    return [b, x + wd / 2, y - TERM_FS - 5];
+  };
+  const [boxT, ax, ay] = box('talker'), [boxL, bx, by] = box('listener'), cx = 720, cy = ay - 290;
+  const at = u => [(1 - u) ** 2 * ax + 2 * u * (1 - u) * cx + u * u * bx, (1 - u) ** 2 * ay + 2 * u * (1 - u) * cy + u * u * by];
+  // sample the curve by length, then cut it into 14 px dashes with 11 px gaps
+  const pts = [[0, ...at(0)]];
+  for (let k = 1; k <= 400; k++) { const [x, yy] = at(k / 400), [l0, x0, y0] = pts[k - 1]; pts.push([l0 + Math.hypot(x - x0, yy - y0), x, yy]); }
+  const L = pts[400][0], ptAt = l => { const k = pts.findIndex(q => q[0] >= l); return k <= 0 ? pts[0].slice(1) : pts[k].slice(1); };
+  const dashes = [];
+  for (let l = 0; l < L - 4; l += 25) {
+    const a0 = ptAt(l), a1 = ptAt(Math.min(L, l + 14));
+    dashes.push([l / L, mk('path', { d: `M${a0[0].toFixed(1)} ${a0[1].toFixed(1)}L${a1[0].toFixed(1)} ${a1[1].toFixed(1)}`, stroke: ROOMS.yellow, 'stroke-width': 5, display: 'none' }, g)]);
+  }
+  const ang = Math.atan2(by - cy, bx - cx);
+  const head = path(g, `M${bx - 20 * Math.cos(ang - .45)} ${by - 20 * Math.sin(ang - .45)}L${bx} ${by}L${bx - 20 * Math.cos(ang + .45)} ${by - 20 * Math.sin(ang + .45)}`, { stroke: ROOMS.yellow, 'stroke-width': 5 }, { o: 0 });
+  const q = G(g, { x: (ax + 2 * cx + bx) / 4, y: (ay + 2 * cy + by) / 4 - 6, o: 0 });
+  mk('circle', { r: 42, fill: ROOMS.yellow, stroke: '#1d1b1a', 'stroke-width': 5 }, q);
+  T(q, '?', { x: 0, y: 20, size: 58, weight: 800, fill: ROOMS.ink, anchor: 'middle' });
+  let shown = -1;
+  const reveal = r => { const n = dashes.filter(([f]) => f < r).length; if (n === shown) return; shown = n; dashes.forEach(([, d], i) => d.setAttribute('display', i < n ? 'inline' : 'none')); };
+  return { g, boxT, boxL, head, q, reveal };
+}
+
+/* ---------- the rest of the chapter: layout, code, helpers ---------- */
+const TALK_VIEW = { x: 571, y: 470, z: 1.4 }, LIS_VIEW = { x: 1029, y: 470, z: 1.4 }, DROP_VIEW = { x: 985, y: 500, z: 1.3 };
+const GAP_VIEW = { x: 1000, y: 600, z: 1.5 };                  // typo: the two tubes that do not meet
+const INBOX = { x: 1000, y: 770, n: 10, w: 244 };            // listener's queue under its mouth piece; its basket (front end) clear of its hand
+const WRITE_SPOT = [520, 520], READ_SPOT = [1080, 520];      // where a message is filled in / read, over the tube
+// The code on screen: lines of talker.py and listener.py as in the files (codeLine), never retyped
+const TIMER_CODE = ['create_timer', '⋮', 'def on_timer', 'msg = String()', 'msg.data =', 'get_logger().info(msg.data)', 'self.pub.publish', 'self.count += 1']
+  .map(k => k === '⋮' ? k : codeLine('talker', k));
+const SPIN_CODE = ['def on_timer', '⋮', 'def main', 'try:', 'rclpy.init()', 'node = Talker()', 'rclpy.spin(node)'].map(k => k === '⋮' ? k : codeLine('talker', k));
+const RECV_CODE = [codeLine('listener', 'create_subscription'), '⋮', codeLine('listener', 'def on_message'), codeLine('listener', "info(f'I heard")];
+const DROP_CODE = [codeLine('talker', 'create_publisher'), codeLine('listener', 'create_subscription')];
+const SLOW_RATE_T = 1.25;   // late and typo: messages a second on screen, slowed down from the real ten (factor computed)
+const LISTEN_LINES = CAPTURED.listener.map(shortTs), LATE_TALKER = CAPTURED.lateTalker.map(shortTs), LATE_LISTENER = CAPTURED.lateListener.map(shortTs);
+const LATE_FIRST = +LATE_LISTENER[1].match(/hello world (\d+)\]$/)[1];   // 50: the first message the late listener heard
+// q1: the timer's period, read from the code, and the changed one asked about; every option computed
+const TIMER_PERIOD = +codeLine('talker', 'create_timer').match(/create_timer\(([\d.]+)/)[1];   // 0.1
+const Q1_PERIOD = .5, Q1_RATE = 1 / Q1_PERIOD;
+const Q1_LINE = codeLine('talker', 'create_timer').replace(`(${TIMER_PERIOD},`, `(${Q1_PERIOD},`);
+const Q1_OPTS = [...new Set([Q1_PERIOD, Q1_RATE, Q1_PERIOD * 10, 1 / TIMER_PERIOD])].sort((a, b) => a - b);
+// Card texts are bi(Chinese, English): the card shows the English with English captions on (C)
+const Q1_WHY = {
+  [Q1_PERIOD]: bi(`${Q1_PERIOD} 是兩次之間隔幾秒，不是每秒幾則：1 秒裡有 1 ÷ ${Q1_PERIOD} = ${Q1_RATE} 個 ${Q1_PERIOD} 秒。`,
+    `${Q1_PERIOD} is the number of seconds between two messages, not messages per second: 1 second holds 1 ÷ ${Q1_PERIOD} = ${Q1_RATE} periods of ${Q1_PERIOD} s.`),
+  [Q1_PERIOD * 10]: bi(`不是 ${Q1_PERIOD} × 10：間隔變長，每秒送得更少。1 ÷ ${Q1_PERIOD} = ${Q1_RATE}。`,
+    `Not ${Q1_PERIOD} × 10: a longer interval means fewer messages per second. 1 ÷ ${Q1_PERIOD} = ${Q1_RATE}.`),
+  [1 / TIMER_PERIOD]: bi(`每秒 ${1 / TIMER_PERIOD} 則是每 ${TIMER_PERIOD} 秒響一次的時候；改成 ${Q1_PERIOD} 秒以後，1 ÷ ${Q1_PERIOD} = ${Q1_RATE}。`,
+    `${1 / TIMER_PERIOD} per second is when it goes off every ${TIMER_PERIOD} s; at ${Q1_PERIOD} s, 1 ÷ ${Q1_PERIOD} = ${Q1_RATE}.`),
+};
+// typo and q2: listener's topic name misspelt (one t gone) or capitalised: its own line with only the name changed
+const TOPIC = codeLine('listener', 'create_subscription').match(/'(\w+)'/)[1];          // chatter
+const TYPO = TOPIC.replace('tt', 't'), CAPS = TOPIC[0].toUpperCase() + TOPIC.slice(1);   // chater, Chatter
+const nameLine = name => codeLine('listener', 'create_subscription').replace(`'${TOPIC}'`, `'${name}'`);
+const CASE_SAME = CAPS === TOPIC;                                                        // false: names are case-sensitive
+const Q1_CARD = { x: 990, y: 36, w: 590, cls: 'side', maxH: 600 };    // q1: over listener's side (it may cover the plate's top); the clock and the code in sight
+const Q2_CARD = { x: 30, y: 24, w: 1040, cls: 'side', maxH: 420 };    // q2: across the top of both walls, above the plates and the antennas
+
+// receive's and late's last pictures, worked out from their own clocks (TIMINGS, the same rules as those beats), for
+// the beats after them to open on and fade (the camera does not cut between them)
+const MOUTH_T = TUBE.x0 - 52, MOUTH_L = TUBE.x1 + 52;   // the two mouth pieces' openings (roomsBell's horn is 52 long)
+const RECV_END = (() => {
+  const R = TIMINGS.receive, end = R.dur + HOLD, V = 900, te = k => R.marks.loop - .6 + k * TIMER_PERIOD, ta0 = te(0) + (MOUTH_L - MOUTH_T) / V;
+  const lines = NEXT_N + 1 + Math.max(0, Math.floor((end - ta0 - TIMER_PERIOD) / TIMER_PERIOD) + 1), slips = [];
+  for (let k = 0; te(k) <= end; k++) { const x = MOUTH_T + (end - te(k)) * V; if (x <= MOUTH_L - 20) slips.push(x); }
+  return { lines, slips };
+})();
+const LATE_END = (() => {
+  const Lt = TIMINGS.late, end = Lt.dur + HOLD, v = 450, tStart = Lt.marks.first - .8, te = n => tStart + .25 + (n - LATE_FIRST) / SLOW_RATE_T;
+  const arrive = n => te(n) + (MOUTH_L - MOUTH_T) / v, slips = [];
+  let got = 0; for (let n = LATE_FIRST; arrive(n) <= end; n++) got++;
+  for (let n = LATE_FIRST; n <= LATE_FIRST + 20; n++) { const x = MOUTH_T + (end - te(n)) * v; if (x >= MOUTH_T && x <= MOUTH_L - 40) slips.push([n, x]); }
+  return { talkerLines: Math.floor(LATE_FIRST + (end - te(LATE_FIRST)) * SLOW_RATE_T) + 2, listenerLines: 1 + got, slips };
+})();
+
+// The set as pubsub leaves it: rooms and robots, the tube and its plate, both mouth pieces on, their pills (and the
+// inbox, listener's queue, when asked).
+function world(w, D, { pills = true, topic = false, inbox = false } = {}) {
+  const st0 = stage(w, D), { L } = st0;
+  const tube = roomsTube(L.tube, TUBE);
+  const bell = (side, x, who) => roomsBell(L.tube, side, { x, y: TUBE.y, h: TUBE.h, color: ROBOT[who].body, dark: ROBOT[who].dark, light: ROBOT[who].light });
+  const bellT = bell(-1, TUBE.x0, 'talker'), bellL = bell(1, TUBE.x1, 'listener');
+  const pubL = pill(L.top, 'publish', '送出', { x: 395, y: 530, bg: ROBOT.talker.body, size: 28, point: 12, px: TUBE.x0 - 26 - 395 });
+  const subL = pill(L.top, 'subscribe', '訂閱', { x: 1185, y: 530, bg: ROBOT.listener.body, size: 28, point: 12, px: TUBE.x1 + 26 - 1185 });
+  const topicW = pill(L.top, 'topic', null, { x: 800, y: 408, bg: '#fffdf8', ink: ROOMS.violet, line: ROOMS.violet, size: 28 });
+  put(pubL, { o: pills ? 1 : 0 }); put(subL, { o: pills ? 1 : 0 }); put(topicW, { o: topic ? 1 : 0 });
+  const box = inbox ? roomsInbox(L.tube, INBOX) : null;
+  return { ...st0, tube, bellT, bellL, pubL, subL, topicW, box };
+}
+// Messages one after another down the tube: message k leaves at te(k) and travels at v px/s, showing while inside
+// [xa, xb] (fading over the last `fade` px). A pure function of t, from a reused pool. tag(k) labels a slip (its number).
+function slipStream(layer, D, { te, k0, k1, v, xa, xb, y = TUBE.y, s = .55, max = 14, fade = 60, tag }) {
+  const pool = [...Array(max)].map(() => ({ e: roomsSlip(layer, { o: 0, y, s }), t: tag ? T(layer, '', { y: y - 34, size: 24, weight: 800, fill: ROOMS.ink, anchor: 'middle', o: 0 }) : null }));
+  clockRun(t => {
+    const on = new Set();
+    for (let k = k0; k <= k1; k++) {
+      const x = xa + (t - te(k)) * v; if (x < xa || x > xb) continue;
+      const j = ((k % max) + max) % max, op = Math.min(1, (xb - x) / fade, (x - xa) / 20 + .3);
+      on.add(j); put(pool[j].e, { o: op, x });
+      if (pool[j].t) { const str = tag(k); if (pool[j].t.textContent !== str) pool[j].t.textContent = str; put(pool[j].t, { o: op, x }); }
+    }
+    pool.forEach((q, j) => { if (!on.has(j)) { put(q.e, { o: 0, x: 0 }); if (q.t) { put(q.t, { o: 0, x: 0 }); if (q.t.textContent) q.t.textContent = ''; } } });   // hidden: blank, as a seek finds it
+  }, D, { tail: true });
+  return pool;
+}
+// A curved arrow from a to b, bending towards c; arrow.drawAt(t0, dur) draws it on and shows its head on arrival.
+function curveArrow(p, [ax, ay], [cx, cy], [bx, by], { color = ROOMS.ink, width = 5 } = {}) {
+  const g = G(p), ang = Math.atan2(by - cy, bx - cx);
+  const line = path(g, `M${ax} ${ay}Q${cx} ${cy} ${bx} ${by}`, { stroke: color, 'stroke-width': width }, { d: 0 });
+  const head = path(g, `M${bx - 18 * Math.cos(ang - .5)} ${by - 18 * Math.sin(ang - .5)}L${bx} ${by}L${bx - 18 * Math.cos(ang + .5)} ${by - 18 * Math.sin(ang + .5)}`, { stroke: color, 'stroke-width': width }, { o: 0 });
+  return Object.assign(g, { line, head, drawAt(t0, dur = .6) { draw(line, t0, dur); tw(head, { o: 1 }, t0 + dur - .1, .15); return g; } });
+}
+// A red cross over something that will not happen (hidden; o 0)
+const crossOut = (p, x, y, r = 40) => put(path(p, `M${x - r} ${y - r}L${x + r} ${y + r}M${x + r} ${y - r}L${x - r} ${y + r}`, { stroke: '#e0503f', 'stroke-width': 10 }), { o: 0 });
+// A numbered step of the route: a disc with its number, the words in a pill beside it (right, or left) (hidden)
+function stepTag(p, k, words, { x, y, color = ROOMS.ink, size = 32, side = 'right' }) {
+  const g = G(p, { x, y, o: 0 }), r = size * .95;
+  const pl = pill(g, words, null, { x: 0, y: 0, bg: '#fffdf8', ink: ROOMS.ink, line: color, size });
+  put(pl, { o: 1, x: (side === 'left' ? -1 : 1) * (pl.w / 2 + r * .7) });
+  mk('circle', { r, fill: color, stroke: '#fffdf8', 'stroke-width': 4 }, g);
+  T(g, String(k), { y: size * .36, size: size * 1.05, weight: 800, fill: '#fff', anchor: 'middle' });
+  return g;
+}
+// 「放慢」: a small badge in screen space while the picture runs slower than real time, with the factor when it is
+// constant. spans [[t0, t1, factor or null]], t1 null: to the beat's end (no fade, which would lengthen the beat);
+// xr its right edge on the stage, y its middle.
+function slowBadge(p, spans, { xr = 1584, y = 46, line } = {}) {
+  spans.forEach(([t0, t1, k]) => {
+    const b = pill(p, '放慢', k ? `${Math.round(k)} 倍` : null, { x: 0, y, bg: '#3d3833', ink: '#fff', size: 24, line });
+    put(b, { x: xr - b.w / 2 }); tw(b, { o: .92 }, t0, .3); if (t1 != null) tw(b, { o: 0 }, t1, .3);
+  });
+}
+// A card from the inbox's slot i rising to a point (a hand, a reading spot): positions as a function of q (0..1)
+const lerpPt = ([ax, ay], [bx, by], q) => [ax + (bx - ax) * q, ay + (by - ay) * q];
+
+/* ---------- beats: [id, title, run(m, D), extra] ---------- */
+const BEATS = [
+  ['open', '兩個終端機', (m, D) => {
+    const p = panel(0), cam = camera(p, D, DESK_VIEW), w = cam.world, ts = m('slow');
+    const desk = G(w); deskScene(desk);
+    const screen = mk('rect', { x: SCR[0], y: SCR[1], width: SCR[2], height: SCR[3], fill: '#1d1b1a' }, w);   // the screen
+    const tT = terminal(w, 'talker', D, ts), tL = terminal(w, 'listener', D, ts);
+    const ask = askArc(w);
+    // what comes in through the screen: the computer's inside on its dark ground. Only this fades (in, over the
+    // terminals, which slide open beneath it and are taken out once covered): one fade, not two at once
+    const incoming = G(w, { o: 0 });
+    mk('rect', { x: SCR[0], y: SCR[1], width: SCR[2], height: SCR[3], fill: '#1d1b1a' }, incoming);
+    put(screenTraces(incoming), { o: 1 });
+    // the inside as one baked picture while the camera pushes (one image scaled, not ~150 shapes repainted every
+    // frame); the shapes themselves from the moment the push ends, so open's last frame is pubsub's first
+    const baked = mk('image', { href: ROOMS_BAKED, x: INSIDE.x, y: INSIDE.y, width: 1600 * INSIDE.s, height: 900 * INSIDE.s }, incoming);
+    const drawn = G(incoming, { ...INSIDE }); stage(drawn, D, { still: true });   // its robots drawn once, as at pubsub's t = 0
+    const frame = bezel(w);
+    // the two terminals we ran in class: in to the screen
+    cam.to(SCREEN_VIEW, .8, 3.2);
+    // left, talker: (每 0.1 秒) a line every 0.1 s
+    fadeIn(tT.name, m('talk'), .35); tw(tT.title, { o: 0 }, m('talk'), .2); tw(tT.outline, { o: 1 }, m('talk'), .35); fadeIn(tT.note, m('talk', 1.4), .35);
+    // right, listener: (跟著印出) I heard
+    fadeIn(tL.name, m('hear'), .35); tw(tL.title, { o: 0 }, m('hear'), .2); tw(tL.outline, { o: 1 }, m('hear'), .35); fadeIn(tL.note, m('hear', 1.6), .35);
+    // this line: the older rows step back, the newest hello world is boxed on each side; (是怎麼) a ?; the arc draws
+    // from the left program (從左邊的程式) to the right one (跑到右邊的程式)
+    [tT, tL].forEach(tm => tw(tm.dim, { o: .78 }, m('ask'), .5));
+    tw(ask.boxT, { o: 1 }, m('ask'), .3); tw(ask.boxL, { o: 1 }, m('ask', .25), .3);
+    popIn(ask.q, m('ask', 1.2), .5);
+    const qy = st(ask.q).y, tq = m('ask', 1.7);   // the ? floats while it waits for an answer
+    const tqEnd = ts + .9;   // the ? has faded: it stops floating (no writes under the zoom)
+    clockRun(t => { const u = Math.min(t, tqEnd); put(ask.q, { y: u > tq ? qy - 6 * Math.sin(2 * Math.PI * (u - tq) / 1.8) : qy }); }, D);
+    prog(q => ask.reveal(q), m('ask', 2), 3.6, lin); tw(ask.head, { o: 1 }, m('ask', 5.5), .2);
+    // slow it down: the scrolling eases off, the terminals open like doors, and we go in through the screen
+    tw(ask.g, { o: 0 }, ts + .5, .4);
+    [tT, tL].forEach((tm, k) => tw(tm.g, { x: (k ? 1 : -1) * 34 }, ts + 1.1, .7));
+    tw(incoming, { o: 1 }, ts + 1.1, .7);
+    cam.to(INSIDE_VIEW, ts + .5, D - ts - .5);
+    // out of the picture, out of the page: the desk once the monitor's frame fills the view, the frame once the view
+    // is inside the screen, the terminals, the arc and the bare screen once the incoming picture covers them. The
+    // times come from the camera itself (its view at t), so each part goes only when it can no longer be seen
+    const firstT = ok => { for (let t = ts; t < D; t += .01) if (ok(cam.at(t).z)) return t; return D; };
+    const tDesk = firstT(z => 800 / z <= 520 && 450 / z <= 300), tFrame = firstT(z => 800 / z <= 496 && 450 / z <= 278), tCovered = ts + 1.8;
+    const outAt = [[desk, tDesk], [frame, tFrame], [tT.g, tCovered], [tL.g, tCovered], [ask.g, ts + .9], [screen, tCovered], [baked, D]], inAt = [[drawn, D]];
+    const vis = (e, on) => { const v = on ? '' : 'none'; if (e.style.display !== v) e.style.display = v; };
+    clockRun(t => { outAt.forEach(([e, t1]) => vis(e, t < t1)); inAt.forEach(([e, t0]) => vis(e, t >= t0)); }, D, { tail: true });
+    slowBadge(p, [[ts + .3, null, null]], { xr: 790, y: 40, line: '#f4efe6' });   // top centre, over the gap between the terminals, which no text crosses as we push in; outlined on the dark frame
+  }, { lead: false }],
+
+  ['pubsub', 'node、topic、message', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world;
+    const { L, tk, ls } = stage(w, D);
+    const tube = roomsTube(L.tube, TUBE), sign = tube.sign;
+    const bellT = roomsBell(L.tube, -1, { x: TUBE.x0, y: TUBE.y, h: TUBE.h, color: ROBOT.talker.body, dark: ROBOT.talker.dark, light: ROBOT.talker.light, o: 0 });
+    const bellL = roomsBell(L.tube, 1, { x: TUBE.x1, y: TUBE.y, h: TUBE.h, color: ROBOT.listener.body, dark: ROBOT.listener.dark, light: ROBOT.listener.light, o: 0 });
+    // idle while the line starts: they look about their rooms
+    tk.eyes(1.4, -.4, -.3).eyes(2.8, .5, .3); ls.eyes(1.8, .4, -.3).eyes(3.2, -.5, .3);
+
+    // every ROS program is a node: each waves hello, its antenna flashes, a "node" chip over its head
+    const chipT = pill(L.top, 'node', null, { x: TK_X, y: 430, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 28, point: 16 });
+    const chipL = pill(L.top, 'node', null, { x: LS_X, y: 430, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 28, point: 16 });
+    tk.eyes(m('node', -.4), 0, 0).to(m('node', -.2), 'wave', .35).hop(m('node'), 16).flash(m('node')).face(m('node'), 'happy').to(m('node', 1.4), 'rest', .5).face(m('node', 1.7), 'smile');
+    ls.eyes(m('node', -.2), 0, 0).to(m('node'), 'waveL', .35).hop(m('node', .2), 16).flash(m('node', .2)).face(m('node', .2), 'happy').to(m('node', 1.6), 'rest', .5).face(m('node', 1.9), 'smile');
+    popIn(chipT, m('node', .1)); popIn(chipL, m('node', .3));
+    // their own names: talker, then listener (as each is said), on their name tags; each taps its chest and looks down
+    popIn(tk.tag, m('names')); popIn(ls.tag, m('names', .78));
+    tk.to(m('names', -.3), 'tagR', .4).eyes(m('names', -.3), 0, .9).to(m('names', 1.5), 'rest', .5).eyes(m('names', 1.5), .2, 0);
+    ls.to(m('names', .45), 'tagL', .4).eyes(m('names', .45), 0, .9).to(m('names', 2.1), 'rest', .5).eyes(m('names', 2.1), -.2, 0);
+    tw(chipT, { o: 0 }, m('names', 2.4), .4); tw(chipL, { o: 0 }, m('names', 2.4), .4);
+
+    // between them a named channel (通道): the tube grows out through the wall; on "topic" its chip
+    const tTube = m('topic', -1.8);
+    put(tube.back, { o: 0 }); put(tube.shine, { o: 0 }); put(tube.ends, { o: 0 }); put(tube.sleeve, { o: 0 });
+    tw(tube.sleeve, { o: 1 }, tTube, .3); tube.edges.forEach(e => draw(e, tTube + .1, 1.1, out)); tw(tube.back, { o: 1 }, tTube + .1, .9);
+    tw(tube.shine, { o: 1 }, tTube + .8, .4); tw(tube.ends, { o: 1 }, tTube + 1, .3);
+    tk.eyes(tTube, .8, .6).hop(tTube + .5, 8); ls.eyes(tTube + .15, -.8, .6).hop(tTube + .65, 8);
+    const topicW = pill(L.top, 'topic', null, { x: 800, y: 408, bg: '#fffdf8', ink: ROOMS.violet, line: ROOMS.violet, size: 28 });
+    popIn(topicW, m('topic'));
+    // its name here (這裡的名字是): both look up at the wall, heads on one side, then the plate /chatter; they point at it
+    tk.eyes(m('topic', .9), 1, -.5).to(m('topic', 1.1), 'tiltR', .5); ls.eyes(m('topic', 1.05), -1, -.5).to(m('topic', 1.25), 'tiltL', .5);
+    popIn(sign, m('chatter'));
+    tk.eyes(m('chatter'), .9, -.7).to(m('chatter', .1), 'pointR', .4).to(m('chatter', 1.6), 'rest', .5);
+    ls.eyes(m('chatter', .15), -.9, -.7).to(m('chatter', .35), 'pointL', .4).to(m('chatter', 1.8), 'rest', .5);
+
+    // talker publishes to chatter: it reaches out and its sending mouth snaps onto its end of the tube
+    const pubL = pill(L.top, 'publish', '送出', { x: 395, y: 530, bg: ROBOT.talker.body, size: 28, point: 12, px: TUBE.x0 - 26 - 395 });
+    tk.to(m('pub', -.5), 'reachR', .4).eyes(m('pub', -.5), .9, .3).to(m('pub', .9), 'rest', .5).face(m('pub', .1), 'happy').face(m('pub', 1.3), 'smile');
+    popIn(bellT, m('pub')); popIn(pubL, m('pub', .3));
+    // listener subscribes to chatter: its receiving mouth on the other end
+    const subL = pill(L.top, 'subscribe', '訂閱', { x: 1185, y: 530, bg: ROBOT.listener.body, size: 28, point: 12, px: TUBE.x1 + 26 - 1185 });
+    ls.to(m('sub', -.5), 'reachL', .4).eyes(m('sub', -.5), -.9, .3).to(m('sub', .9), 'rest', .5).face(m('sub', .1), 'happy').face(m('sub', 1.3), 'smile');
+    popIn(bellL, m('sub')); popIn(subL, m('sub', .3));
+
+    // one message, in slow motion: talker takes a slip and pushes it into its mouth; it travels the tube (在 topic 上傳),
+    // is looked at and opened, folds again, goes through the wall and out of listener's mouth into its hand
+    const tGet = m('sub', .5), tPush = m('sub', 1.3), tIn = tPush + .45, tStop = m('msg', -.3);
+    const tUnfold = m('data', -1.95), tFold = m('blind', 1), tGo = tFold + .45, tArrive = tGo + 2.4, tMatch = m('only', 3.1);
+    const bump = t => t > tMatch && t < tMatch + .6 ? .22 * Math.sin(Math.PI * (t - tMatch) / .6) : 0;   // the held slip's type matches the plate's
+    const slipT = roomsSlip(L.hold, { n: NEXT_N, o: 0 }), slipL = roomsSlip(L.top, { n: NEXT_N, o: 0 });
+    const slipM = roomsSlip(tube.inside, { n: NEXT_N, y: TUBE.y, o: 0 });
+    const slipX = t => t < tStop ? bellT.mouth + (X_STOP - bellT.mouth) * out(clamp01((t - tIn) / (tStop - tIn)))
+      : t < tGo ? X_STOP + (X_CREEP - X_STOP) * (t - tStop) / (tGo - tStop)
+        : X_CREEP + (bellL.mouth - X_CREEP) * io(clamp01((t - tGo) / (tArrive - tGo)));
+    const slipQ = t => t < tFold ? clamp01((t - tUnfold) / .6) : 1 - clamp01((t - tFold) / .4);
+    clockRun(t => {
+      if (t >= tGet && t < tIn) { const [hx, hy] = tk.handAt(t, 'R'); put(slipT, { o: 1, x: hx + 4, y: hy - 18, s: .5 + .5 * back(clamp01((t - tGet) / .3)) }); }
+      else put(slipT, { o: 0, x: 0, y: 0, s: 1 });   // hidden slips rest at one place, so a seek draws what play does
+      if (t >= tIn && t < tArrive) { put(slipM, { o: 1, x: slipX(t) }); slipM.unfold(slipQ(t)); }
+      else put(slipM, { o: 0, x: 0 });
+      if (t >= tArrive) {
+        const [hx, hy] = ls.handAt(t, 'L'), q = io(clamp01((t - tArrive) / .35));
+        put(slipL, { o: 1, x: bellL.mouth + (hx - 2 - bellL.mouth) * q, y: TUBE.y + (hy - 36 - TUBE.y) * q, s: (1 - .15 * q) * (1 + bump(t)) });
+      } else put(slipL, { o: 0, x: 0, y: 0, s: 1 });
+    }, D, { tail: true });
+    slowBadge(p, [[tIn - .3, tArrive + .6, null]], { xr: 1590 });   // one message followed in slow motion
+    tk.to(tGet - .3, 'holdR', .4).eyes(tGet - .2, .5, .3).to(tPush, 'reachR', .45).eyes(tPush, .9, .3).to(tIn + .3, 'rest', .6).eyes(tIn + .2, 1, .3);
+    ls.eyes(tIn, -.8, .2);
+
+    // in close: talker watching its slip in the tube under the plate. A message; its type (型別) is String
+    cam.to(CLOSE, m('msg', -1.3), 1.3);
+    tw(pubL, { o: 0 }, m('msg', -1.3), .4);
+    const msgL = pill(L.top, 'message', null, { x: X_STOP, y: 548, bg: ROOMS.yellow, ink: ROOMS.ink, size: 26, point: 12 });
+    popIn(msgL, m('msg'));
+    const typeL = pill(L.top, '型別', null, { x: 0, y: TUBE.y, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 26, point: 12, side: 'left' });
+    put(typeL, { x: X_STOP + 42 + 16 + 12 + typeL.w / 2 });   // its pointer just clear of the folded slip's right edge
+    popIn(typeL, m('msg', 1.2)); pulse(slipM, m('msg', 2.9), 1.22);
+    tk.eyes(m('msg', -.6), .9, .5).to(m('msg', 1.2), 'tiltR', .5);
+    // inside it (裡面): talker leans in on its slip
+    tk.to(m('msg', 3.5), 'rest', .5).eyes(m('msg', 3.5), .9, .8).hop(m('msg', 3.6), 7).face(m('msg', 3.6), 'o').face(m('msg', 4.4), 'smile');
+    // its one field (一個欄位): the slip opens out; on "data" the field's name is underlined
+    tw(typeL, { o: 0 }, tUnfold - .3, .3);
+    tk.face(tUnfold + .1, 'o').to(tUnfold + .1, 'rest', .5).face(m('data', .2), 'happy').hop(m('data', .2), 10);
+    tw(slipM.mark, { o: 1 }, m('data'), .3); tw(slipM.mark, { o: 0 }, tFold - .2, .2);
+
+    // the point: back out to the wall between them. The sender (送的人) does not know the receiver (收的人)
+    cam.to(WIDE, m('blind', .1), 1.5);
+    tw(msgL, { o: 0 }, m('blind'), .4);
+    tw(pubL, { o: 1 }, m('blind', .9), .4);
+    const askT = robotSay(L.top, '?', { x: TK_X + 110, y: 404, to: [TK_X + 50, 470], size: 46, o: 0 });
+    const askL = robotSay(L.top, '?', { x: LS_X - 110, y: 404, to: [LS_X - 50, 470], size: 46, o: 0 });
+    tk.face(m('blind', .6), 'smile').eyes(m('blind', .7), 1, -.1).to(m('blind', .8), 'shrug', .45).face(m('blind', .8), 'flat');
+    popIn(askT, m('blind', .9));
+    ls.eyes(m('blind', 2.5), -1, -.1).to(m('blind', 2.5), 'tiltL', .4).face(m('blind', 2.6), 'flat');
+    popIn(askL, m('blind', 2.7));
+    // the slip arrives: listener takes it from its mouth, without knowing who sent it
+    ls.to(tArrive - .55, 'reachL', .4).eyes(tArrive - .6, -.8, .3).face(tArrive, 'o').to(tArrive + .35, 'showL', .5).eyes(tArrive + .4, -.7, -.3);
+    tk.to(tArrive - .6, 'rest', .5).eyes(tArrive - .6, 1, -.1);
+    // they only know (只認) the topic's name (topic 的名字) and type (和型別): the plate lights, each antenna is
+    // tuned to it, the name pulses, then the type joins it: /chatter · String, the same String the slip carries
+    tw(askT, { o: 0 }, m('only', -.3), .3); tw(askL, { o: 0 }, m('only', -.3), .3);
+    tw(sign.short.glow, { o: 1 }, m('only'), .5); put(sign.long.glow, { o: 1 });
+    tk.eyes(m('only'), .9, -.9).face(m('only', .3), 'smile'); ls.eyes(m('only', .1), -.9, -.9).face(m('only', .3), 'smile');
+    tk.flash(m('only', .8)); ls.flash(m('only', .9));
+    const yS = TUBE.y - TUBE.h / 2 - 92, [bx1, by1] = tk.bulb(), [bx2, by2] = ls.bulb();
+    const lookT = path(L.top, '', { stroke: ROBOT.talker.body, 'stroke-width': 6, 'stroke-dasharray': '1 13' }, { o: 0 });
+    const lookL = path(L.top, '', { stroke: ROBOT.listener.body, 'stroke-width': 6, 'stroke-dasharray': '1 13' }, { o: 0 });
+    const tWide = m('only', 3);
+    let lastE = null;
+    clockRun(t => {
+      const e = Math.round(800 - (sign.short.w + (sign.long.w - sign.short.w) * io(clamp01((t - tWide) / .4))) / 2 - 10);
+      if (e === lastE) return; lastE = e;
+      lookT.setAttribute('d', `M${bx1 + 18} ${by1}L${e} ${yS}`); lookL.setAttribute('d', `M${bx2 - 18} ${by2}L${1600 - e} ${yS}`);
+    }, D, { tail: true });
+    tw(lookT, { o: 1 }, m('only', .8), .5); tw(lookL, { o: 1 }, m('only', .9), .5);
+    pulse(sign.short, m('only', 1.9), 1.1);
+    tw(sign.short, { o: 0 }, tWide, .3); tw(sign.long, { o: 1 }, tWide, .3);   // (the slip in listener's hand pulses with it: its clock)
+    tk.face(tWide + .2, 'happy').hop(tWide + .2, 12); ls.face(tWide + .3, 'happy').hop(tWide + .35, 12);
+  }, { lead: false }],
+  ['timer', 'timer', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { topic: true }), { L, tk, set, tube, bellT, bellL } = W, clock = set.clock;
+    // pubsub's last picture, in the same wide shot: its name tags, the lit plate with its type, the topic chip and the
+    // slip in listener's hand go as the camera starts in, instead of vanishing at the cut
+    [tk, W.ls].forEach(r => { put(r.tag, { o: 1, s: 1 }); tw(r.tag, { o: 0 }, .1, .4); });
+    const { short: sgS, long: sgL } = tube.sign;
+    put(sgS, { o: 0 }); put(sgL, { o: 1 }); put(sgL.glow, { o: 1 });
+    tw(sgL.glow, { o: 0 }, .1, .25); tw(sgL, { o: 0 }, .1, .25); tw(sgS, { o: 1 }, .35, .25); tw(W.topicW, { o: 0 }, .1, .4);   // one plate, then the other: no text over text
+    W.ls.to(-1, 'showL', 0).to(.2, 'rest', .5).face(-1, 'happy').face(.4, 'smile'); tk.face(-1, 'happy').face(.4, 'smile');
+    const heldL = roomsSlip(L.top, { n: NEXT_N, o: 0 });
+    clockRun(t => {
+      if (t >= .35) return put(heldL, { o: 0, x: 0, y: 0, s: 1 });
+      const [hx, hy] = W.ls.handAt(t, 'L'); put(heldL, { o: 1 - t / .35, x: hx - 2, y: hy - 36, s: .85 });
+    }, D);
+    // talker's side (先看 talker 這一邊): in on its room and its code
+    cam.to(TALK_VIEW, .3, 2.2); tw(W.subL, { o: 0 }, .3, .4);
+    const code = codePanel(L.top, TIMER_CODE, { x: 40, y: 162, w: 650, title: 'talker.py', tint: ROBOT.talker.body, o: 0 });
+    tw(code, { o: 1 }, 1.3, .5); tk.eyes(1.3, .3, -.9);
+    // not a while loop of its own (不自己寫 while 迴圈): talker shakes its head
+    tk.to(m('timer', -4.8), 'tiltL', .25).to(m('timer', -4.5), 'tiltR', .3).to(m('timer', -4.15), 'tiltL', .3).to(m('timer', -3.8), 'rest', .35);
+    // not a while loop of its own: a timer. Its line lights, and the alarm clock on the table is that timer
+    tw(code.row(0).bar, { o: 1 }, m('timer'), .3);
+    const timerL = pill(L.top, 'timer', null, { x: 70, y: 546, bg: ROBOT.talker.body, size: 28, point: 12 });
+    popIn(timerL, m('timer', .1));
+    tk.to(m('timer', -.3), 'reachL', .4).eyes(m('timer', -.3), -1, .3).to(m('timer', 1.4), 'rest', .5);
+    // every 0.1 s (shown slowed down): the face fills through one period; time's up (時間一到) and it rings
+    const tR = m('ring'), tDue = m('ring', 3), tTen = m('ten');
+    tw(code.box(0, String(TIMER_PERIOD)), { o: 1 }, tR, .3);
+    slowBadge(p, [[tR, tDue + 1.2, (tDue - tR) / TIMER_PERIOD], [tDue + 1.2, tTen - .2, null]]);   // one period shown over 3 s, then on_timer's steps
+    tk.eyes(tR, -1, .2);
+    clockRun(t => {
+      let q = 0, ring = 0, sh = 0;
+      if (t >= tR && t < tDue) q = (t - tR) / (tDue - tR);
+      else if (t >= tDue && t < tTen) { const u = t - tDue; ring = Math.max(0, 1 - u / 1.4); sh = ring * 9 * Math.sin(u * 45); }
+      else if (t >= tTen) { const u = (t - tTen) / TIMER_PERIOD; q = u % 1; ring = q < .4 ? 1 : 0; sh = ring * 6 * Math.sin(t * 70); }
+      clock.time(q, ring, sh);
+    }, D, { tail: true });
+    // ROS calls on_timer once (呼叫一次 on_timer): the ring reaches the code; its definition lights
+    const call = curveArrow(L.top, [40, 585], [0, 420], [code.x - 6, code.row(2).y - 8], { color: ROBOT.talker.dark });
+    call.drawAt(m('call', -.6), .6);
+    tw(code.row(0).bar, { o: 0 }, m('call'), .3); tw(code.row(2).bar, { o: 1 }, m('call'), .3);
+    tk.flash(m('call')).face(m('call'), 'happy').face(m('call', 1.2), 'smile');
+    // on_timer's three things: a new message (建立), its data filled in (填進), published (publish)
+    const slip = roomsSlip(L.top, { n: NEXT_N, o: 0 }), [wx, wy] = WRITE_SPOT;
+    const tNew = m('new'), tFill = m('fill'), tSend = m('send');
+    const vOut = (1180 - bellT.mouth) / (m('ten', -.35) - tSend - .1);   // the slowed slip is out of sight before the badge goes and real speed starts
+    tk.to(tNew - .3, 'holdR', .4).eyes(tNew, .5, .2).to(tFill - .5, 'pointR', .4).eyes(tFill - .4, .9, -.4)
+      .to(tSend - .5, 'reachR', .45).eyes(tSend - .3, .9, .3).to(tSend + .8, 'rest', .5).eyes(tSend + .8, 1, .2);
+    clockRun(t => {
+      if (t < tNew) return put(slip, { o: 0, x: 0, y: 0, s: 1 });
+      const [hx, hy] = tk.handAt(t, 'R');
+      let x = hx + 4, y = hy - 18, o = 1, q = 0;
+      if (t >= tFill - .5 && t < tSend - .6) { const u = io(clamp01((t - (tFill - .5)) / .5)); [x, y] = lerpPt([hx + 4, hy - 18], [wx, wy], u); q = clamp01((t - tFill) / .6); }
+      else if (t >= tSend - .6 && t < tSend + .1) { const u = io(clamp01((t - (tSend - .6)) / .5)); [x, y] = lerpPt([wx, wy], [hx + 4, hy - 18], u); q = 1 - clamp01((t - (tSend - .6)) / .35); }
+      else if (t >= tSend + .1) { x = bellT.mouth + (t - tSend - .1) * vOut; y = TUBE.y; o = x > 1180 ? 0 : 1; }
+      put(slip, { o, x, y, s: t < tNew + .3 ? .5 + .5 * back(clamp01((t - tNew) / .3)) : 1 });
+      slip.unfold(q);
+    }, D, { tail: true });
+    tw(W.pubL, { o: 0 }, tFill - .6, .3); tw(W.pubL, { o: 1 }, tSend + .8, .4);
+    [[3, tNew], [4, tFill], [6, tSend]].forEach(([r, t0], i, a) => { tw(code.row(r).bar, { o: 1 }, t0, .3); tw(code.row(i ? a[i - 1][0] : 2).bar, { o: 0 }, t0, .3); });
+    // the slip, once in the tube, travels on to listener behind the camera; a second in real time: ten a second
+    cam.to(WIDE, tTen - .2, 1.4);
+    tw(code, { o: 0 }, tTen - .2, .5); tw(timerL, { o: 0 }, tTen - .2, .4); tw(call, { o: 0 }, tTen - .2, .4); tw(W.subL, { o: 1 }, tTen, .4);   // real speed now: the wide shot, no small code
+    slipStream(tube.inside, D, { te: k => tTen + .4 + k * TIMER_PERIOD, k0: 0, k1: Math.ceil((D + 1) / TIMER_PERIOD), v: 900, xa: bellT.mouth, xb: bellL.mouth });
+    const tenL = pill(L.top, `每秒約 ${1 / TIMER_PERIOD} 則`, null, { x: 800, y: 722, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28 });
+    popIn(tenL, m('ten', 1.4));
+    tk.eyes(tTen, .9, .3).face(m('ten', 1.6), 'happy');
+  }, { lead: false }],
+
+  ['q1', '小測驗', (m, D) => {
+    const p = panel(0), cam = camera(p, D, TALK_VIEW), w = cam.world, W = world(w, D, { pills: false }), { L, tk, set, tube, bellT } = W, clock = set.clock;
+    const code = codePanel(L.top, [Q1_LINE], { x: 60, y: 260, w: 650, title: `talker.py（改成 ${Q1_PERIOD} 秒）`, tint: ROBOT.talker.body });
+    put(code.box(0, String(Q1_PERIOD)), { o: 1 });
+    const rateL = pill(L.top, `1 秒：${Q1_RATE} 則`, null, { x: 560, y: 545, bg: ROOMS.yellow, ink: ROOMS.ink, size: 30 });
+    const slips = [...Array(4)].map(() => roomsSlip(tube.inside, { o: 0, y: TUBE.y, s: .55 }));
+    tk.eyes(.4, -1, .2).to(.5, 'tiltR', .5);
+    S.q1 = { clock, rateL, slips, x0: bellT.mouth };
+  }, { lead: false, ask: done => quiz(Q1_CARD, [{
+    id: 'c-timer-rate',   // the break after the comma: never inside 送出
+    prompt: [bi(`把 timer 改成每 ${Q1_PERIOD} 秒響一次，`, `If the timer goes off every ${Q1_PERIOD} s,`), h('br'), bi('每秒大約送出幾則 message？', 'about how many messages go out per second?')],
+    build: choice(Q1_OPTS.map(v => [bi(`${v} 則`, `${v} messages`)]), Q1_OPTS.indexOf(Q1_RATE),
+      bi(`每 ${Q1_PERIOD} 秒響一次：1 秒裡響 1 ÷ ${Q1_PERIOD} = ${Q1_RATE} 次，所以每秒大約送出 ${Q1_RATE} 則。`,
+        `It goes off every ${Q1_PERIOD} s: in 1 second that is 1 ÷ ${Q1_PERIOD} = ${Q1_RATE} times, so about ${Q1_RATE} messages go out per second.`),
+      Q1_OPTS.map(v => v === Q1_RATE ? null : Q1_WHY[v]),
+      () => {   // the clock rings twice a second, and twice a second a slip goes
+        const { clock, rateL, slips, x0 } = S.q1, secs = 2;
+        fxp(q => { const u = q * secs, ph = (u / Q1_PERIOD) % 1; clock.time(ph, ph < .3 ? 1 : 0, ph < .3 ? 7 * Math.sin(u * 70) : 0); }, 0, secs, lin);
+        slips.forEach((e, i) => { fx(e, { o: 1, x: x0 }, (i + 1) * Q1_PERIOD - .05, .05); fx(e, { x: x0 + 520 }, (i + 1) * Q1_PERIOD, 1.1, lin); fx(e, { o: 0 }, (i + 1) * Q1_PERIOD + .9, .2); });
+        fx(rateL, { o: 1 }, .3, .3);
+      }),
+  }], done) }],
+
+  ['spin', 'spin', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false }), { L, tk, set } = W, clock = set.clock;
+    cam.to(TALK_VIEW, .3, 1.8);
+    const code = codePanel(L.top, SPIN_CODE, { x: 300, y: 162, w: 390, title: 'talker.py', tint: ROBOT.talker.body, o: 0 });
+    tw(code, { o: 1 }, 1, .5);
+    // who watches the clock (是誰在看時鐘)?
+    const who = robotSay(L.top, '?', { x: 70, y: 500, to: [72, 572], size: 40, o: 0 });
+    popIn(who, 2.4); tw(who, { o: 0 }, m('spin', -.4), .3);
+    tk.eyes(2.2, -1, .3).to(2.2, 'tiltL', .5).to(m('spin', -.3), 'rest', .5);
+    // spin, called last: its line lights, and it is the robot's patrol loop, going round and round
+    tw(code.row(6).bar, { o: 1 }, m('spin'), .3);
+    const loop = robotPatrol(L.hold, { x: 215, y: 650, rx: 200, ry: 120, color: ROBOT.talker.dark, o: 0 });
+    tw(loop, { o: 1 }, m('spin', .2), .5);
+    const spinL = pill(L.top, 'spin', null, { x: 430, y: 748, bg: ROBOT.talker.dark, size: 28 });
+    popIn(spinL, m('spin', .4));
+    const P0 = m('run') - m('check'), tStop = m('nospin', 1.1), qAt = t => .75 + (Math.min(t, tStop) - m('check')) / P0;
+    clockRun(t => loop.set(qAt(t)), D, { tail: true });
+    slowBadge(p, [[m('spin', .2), tStop, null]]);   // the real loop goes round far faster
+    // it keeps checking: is the timer due (timer 到了沒有)? any new message (有沒有新的 message)?
+    const askClock = robotSay(L.top, '到了嗎？', { x: 80, y: 505, to: [72, 572], size: 26, o: 0 });
+    const askMsg = robotSay(L.top, '有新 message 嗎？', { x: 150, y: 470, to: [176, 522], size: 26, o: 0 });   // talker asks itself; it subscribes to nothing, so it shakes its head
+    popIn(askClock, m('check', .2)); tw(askClock, { o: 0 }, m('check', 3.6), .3);
+    popIn(askMsg, m('check', 4.3)); tw(askMsg, { o: 0 }, m('run', -.6), .3);
+    tk.eyes(m('check'), -.9, .3).eyes(m('check', 4), .2, -.6).eyes(m('run', -.4), -.9, .3);
+    tk.to(m('check', 5.6), 'tiltL', .25).to(m('check', 5.9), 'tiltR', .3).to(m('check', 6.25), 'rest', .3);   // none: nothing subscribed
+    // one is due (有): it calls that function, on_timer
+    clockRun(t => { const u = t - m('run'); clock.time(t < m('run') ? clamp01((t - m('check')) / P0) : 0, u >= 0 && u < 1.4 ? 1 - u / 1.4 : 0, u >= 0 && u < 1.4 ? 8 * (1 - u / 1.4) * Math.sin(u * 45) : 0); }, D, { tail: true });
+    const call = curveArrow(L.top, [90, 585], [120, 260], [296, code.row(0).y - 8], { color: ROBOT.talker.dark });
+    call.drawAt(m('run', .4), .7);
+    tw(code.row(6).bar, { o: 0 }, m('run', .9), .3); tw(code.row(0).bar, { o: 1 }, m('run', .9), .3);
+    tk.flash(m('run', 1.1)).face(m('run', 1.1), 'happy').face(m('run', 2.4), 'smile');
+    // a function that ROS calls like this is a callback
+    const cbL = pill(L.top, 'callback', null, { x: 0, y: code.row(0).y - 8, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28, point: 14, side: 'left' });
+    put(cbL, { x: code.x + code.w + 18 + cbL.w / 2 }); popIn(cbL, m('cb'));
+    // without spin (沒有 spin): nobody does the rounds. The robot stands frozen, the timer never rings, nothing is called
+    tw(code.row(6).bar, { o: 0 }, m('nospin', .8), .2); tw(code.strike(6), { o: 1 }, m('nospin', 1), .3);
+    clockRun(t => loop.halt(t >= tStop ? 1 : 0), D, { tail: true }); tw(loop, { o: .35 }, tStop, .4);
+    tk.freeze(tStop);
+    tw(crossOut(L.top, 70, 642, 46), { o: 1 }, m('nospin', 2.7), .3);
+    tw(call, { o: .25 }, m('nospin', 4.3), .3); tw(cbL, { o: .35 }, m('nospin', 4.3), .3); tw(code.row(0).bar, { o: 0 }, m('nospin', 4.3), .3);
+    tw(crossOut(L.top, code.x + code.w + 18 + cbL.w / 2, code.row(0).y - 8, 26), { o: 1 }, m('nospin', 4.5), .3);
+  }, { lead: false }],
+
+  ['receive', '佇列', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false, inbox: true }), { L, ls, tube, bellT, bellL, box } = W;
+    cam.to(LIS_VIEW, .2, 1.8);
+    const code = codePanel(L.top, RECV_CODE, { x: 600, y: 150, w: 980, title: 'listener.py', tint: ROBOT.listener.body, o: 0 });
+    const term = termPanel(L.top, LISTEN_LINES, { x: 960, y: 350, w: 620, rows: 2, title: 'listener', o: 0 });
+    tw(code, { o: 1 }, 1.2, .5); tw(term, { o: 1 }, 1.4, .5);
+    tw(code.row(0).bar, { o: 1 }, 1.4, .3);
+    // the message reaches listener's side; first it goes into a waiting place: the queue
+    put(box.g, { o: 0 }); tw(box.g, { o: 1 }, m('queue', -.4), .4);
+    const card = box.card(box.slips), [sx9, sy9] = box.slot(9), tDrop = m('queue', .3);
+    const slip = roomsSlip(tube.inside, { o: 0, y: TUBE.y, s: .6 });
+    const queueL = pill(L.top, '佇列', 'queue', { x: 890, y: 742, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 28, point: 14, side: 'right' });
+    popIn(queueL, m('queue', 4.5));
+    // listener's spin does its rounds; it sees something in the queue and takes it out (拿出來)
+    const loop = robotPatrol(L.hold, { x: 1400, y: 655, rx: 150, ry: 105, color: ROBOT.listener.dark, o: 0 });
+    tw(loop, { o: 1 }, m('take', .4), .5);
+    const tSee = m('take', 1.6), tTake = m('take', 4.3), tRead = m('onmsg', -.2);
+    clockRun(t => loop.set(.75 + (t - tSee) / 3.2), D, { tail: true });
+    ls.eyes(m('queue'), -.9, .7).eyes(tSee, -.8, .8).to(tTake - .4, 'takeL', .4).to(tTake + .4, 'showL', .5).eyes(tTake + .4, -.7, -.4).eyes(tRead, -.9, -.5);
+    clockRun(t => {
+      // into the tube's end, out of the mouth and down into the front slot; then up to listener's hand, then read
+      if (t < tDrop - 1.2) { put(slip, { o: 0, x: 0 }); put(card, { o: 0, x: 0, y: 0 }); return; }
+      if (t < tDrop) { put(slip, { o: 1, x: bellL.mouth - 220 + (t - tDrop + 1.2) / 1.2 * 220 }); put(card, { o: 0, x: 0, y: 0 }); return; }
+      put(slip, { o: 0, x: 0 });
+      let [x, y] = [sx9, sy9];
+      if (t < tDrop + .5) [x, y] = lerpPt([bellL.mouth + 10, TUBE.y], [sx9, sy9], io(clamp01((t - tDrop) / .5)));
+      else if (t >= tTake && t < tRead) { const [hx, hy] = ls.handAt(t, 'L'); [x, y] = lerpPt([sx9, sy9], [hx, hy + 20], io(clamp01((t - tTake) / .35))); }
+      put(card, { o: t >= tRead ? 0 : 1, x, y });
+    }, D, { tail: true });
+    // it calls on_message: the message opens where listener reads it
+    const open = roomsSlip(L.top, { n: NEXT_N, o: 0, x: READ_SPOT[0], y: READ_SPOT[1] });
+    open.unfold(1); tw(open, { o: 1 }, tRead, .3);
+    tw(code.row(0).bar, { o: 0 }, m('onmsg'), .3); tw(code.row(2).bar, { o: 1 }, m('onmsg'), .3);
+    ls.flash(m('onmsg')).face(m('onmsg', .2), 'happy');
+    // and prints I heard, then hello world and its number: the real line
+    tw(code.row(2).bar, { o: 0 }, m('print'), .3); tw(code.row(3).bar, { o: 1 }, m('print'), .3);
+    tw(term.bar(1), { o: 1 }, m('print', .3), .3);
+    // one sent, one printed, ten a second: the picture you saw in the terminal
+    const tLoop = m('loop');
+    slowBadge(p, [[tDrop - 1.2, tLoop - .2, null]], { xr: 190 });
+    cam.to(WIDE, tLoop - .2, 1.4);
+    tw(open, { o: 0 }, tLoop, .3); tw(queueL, { o: 0 }, tLoop - .2, .3); tw(code, { o: 0 }, tLoop - .2, .5); tw(term, { o: 0 }, tLoop - .2, .4);
+    clockRun(t => term.show(NEXT_N + (t < m('print', .3) ? 0 : 1)), D, { tail: true });
+    // in real time: each message comes out of the mouth into the front slot, is taken at once, and its line prints
+    const V = 900, te = k => tLoop - .6 + k * TIMER_PERIOD, ta = k => te(k) + (bellL.mouth - bellT.mouth) / V;   // message NEXT_N + 1 + k
+    slipStream(tube.inside, D, { te, k0: 0, k1: Math.ceil((D + 1) / TIMER_PERIOD), v: V, xa: bellT.mouth, xb: bellL.mouth });
+    const big = termPanel(L.top, LISTEN_LINES, { x: 830, y: 120, w: 750, rows: 3, size: 24, title: 'listener', o: 0 });
+    tw(big, { o: 1 }, tLoop + .2, .4);
+    clockRun(t => big.show(NEXT_N + 1 + Math.max(0, Math.floor((t - ta(0) - TIMER_PERIOD) / TIMER_PERIOD) + 1)), D, { tail: true });
+    const flow = [0, 1, 2].map(() => box.card(box.slips));
+    clockRun(t => {
+      const k = Math.floor((t - ta(0)) / TIMER_PERIOD);
+      flow.forEach((c, j) => {
+        const kk = k - j, u = t - ta(kk);                       // the last three: one dropping in, one standing, one leaving
+        if (kk < 0 || t < ta(0) || u < 0 || u >= TIMER_PERIOD) return put(c, { o: 0, x: 0, y: 0 });
+        const q = u / TIMER_PERIOD, [hx, hy] = ls.handAt(t, 'L');
+        const [x, y] = q < .4 ? lerpPt([bellL.mouth + 10, TUBE.y + 20], [sx9, sy9], q / .4) : q < .7 ? [sx9, sy9] : lerpPt([sx9, sy9], [hx, hy + 20], (q - .7) / .3);
+        put(c, { o: q < .85 ? 1 : 0, x, y });
+      });
+    }, D, { tail: true });
+    ls.to(tLoop + .2, 'takeL', .4).eyes(tLoop + .2, -.8, .8).face(tLoop + .6, 'happy');
+    const tenL = pill(L.top, '一則一行 · 每秒十次', null, { x: 800, y: 722, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28 });
+    popIn(tenL, m('loop', 3.5));
+  }, { lead: false }],
+
+  ['drop', '佇列滿了', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false, inbox: true }), { L, ls, tube, bellL, box } = W;
+    // receive's last picture, in the same wide shot: its terminal, the messages in the tube, its pill and listener's
+    // patrol go over the first 0.4 s instead of vanishing at the cut
+    const bigR = termPanel(L.top, LISTEN_LINES, { x: 830, y: 120, w: 750, rows: 3, size: 24, title: 'listener' });
+    bigR.show(RECV_END.lines); tw(bigR, { o: 0 }, .05, .4);
+    RECV_END.slips.forEach(x => tw(roomsSlip(tube.inside, { x, y: TUBE.y, s: .55 }), { o: 0 }, .05, .35));
+    const tenR = pill(L.top, '一則一行 · 每秒十次', null, { x: 800, y: 722, bg: ROOMS.yellow, ink: ROOMS.ink, size: 28 });
+    put(tenR, { o: 1 }); tw(tenR, { o: 0 }, .05, .4);
+    ls.to(-1, 'takeL', 0).to(.2, 'rest', .5).face(-1, 'happy').face(.4, 'smile').eyes(-1, -.8, .8).eyes(.3, -.6, .2);
+    cam.to(DROP_VIEW, .2, 1.6);
+    const code = codePanel(L.top, DROP_CODE, { x: 400, y: 168, w: 1180, title: 'talker.py · listener.py', tint: ROOMS.violet, o: 0 });
+    tw(code, { o: 1 }, 1, .5);
+    // the 10 written when making the publisher and the subscription: the queue's length, its ten slots
+    tw(code.box(0, '10'), { o: 1 }, m('ten'), .3); tw(code.box(1, '10'), { o: 1 }, m('ten', .2), .3);
+    tw(box.numbers, { o: 1 }, m('ten', .6), .4);
+    const tenL = pill(L.top, '佇列長度 10', null, { x: 880, y: 737, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 28, point: 14, side: 'right' });
+    popIn(tenL, m('ten', 1)); tw(tenL, { o: 0 }, m('full', -.5), .3);
+    // listener is slow: it reads one message for a long time, its rounds crawl
+    const loop = robotPatrol(L.hold, { x: 1400, y: 655, rx: 150, ry: 105, color: ROBOT.listener.dark, o: 0 });
+    put(loop, { o: 1 }); tw(loop, { o: 0 }, .05, .4); tw(loop, { o: 1 }, m('slow'), .5); clockRun(t => loop.set(.6 + Math.max(0, t - m('slow')) / 14), D, { tail: true });
+    const busy = robotSay(L.top, '…', { x: 1310, y: 420, to: [1360, 470], size: 40, o: 0 });
+    popIn(busy, m('slow', 1.5));
+    ls.to(m('slow', .2), 'showL', .5).eyes(m('slow', .2), -.7, -.4).face(m('slow', .6), 'flat');
+    const held = roomsSlip(L.top, { o: 0, s: .85 });
+    clockRun(t => { if (t < m('slow', .5)) return put(held, { o: 0, x: 0, y: 0 }); const [hx, hy] = ls.handAt(t, 'L'); put(held, { o: 1, x: hx - 2, y: hy - 36 }); }, D, { tail: true });
+    // messages come faster than it takes them: the queue fills (滿); after that each one that comes pushes the queue up
+    // and the oldest, at the front, tips out into the basket, on and on (寧可少收幾則)
+    const N = box.n, rate = 2, tA = m('full', .5) - (N - 1) / rate, arrive = j => tA + j / rate, tOver = arrive(N);
+    slowBadge(p, [[tA - .3, null, 1 / TIMER_PERIOD / rate]], { xr: 214, y: 852 });
+    const BIN = box.bin;   // the basket at the queue's front end
+    const slotOf = (j, n) => N - 1 - j + Math.max(0, n - N);   // slot of arrival j once n have come (N - 1 is the front)
+    const cards = [...Array(N + 2)].map(() => box.card(box.slips));
+    clockRun(t => {
+      const n = t < tA ? 0 : Math.floor((t - tA) * rate) + 1, aL = arrive(n - 1), on = new Set();
+      for (let j = Math.max(0, n - N - 2); j < n; j++) {
+        const c = cards[j % cards.length]; let x, y, r = 0;
+        if (j < n - N) {                                                       // dropped: the last one tips into the basket
+          if (j < n - N - 1) continue;
+          const u = clamp01((t - aL) / .8), [sx, sy] = box.slot(N - 1);
+          x = sx + (BIN[0] - sx) * io(u); y = sy - 46 * Math.sin(Math.PI * Math.min(1, u * 1.3)) + (BIN[1] + 30 - sy) * u * u; r = 70 * u;
+        } else if (j === n - 1) {                                              // just came: from the mouth to the back of the line
+          [x, y] = lerpPt([bellL.mouth + 10, TUBE.y], box.slot(slotOf(j, n)), io(clamp01((t - aL) / .45)));
+        } else {                                                               // waiting: moves up one slot when the queue is full
+          const s0 = slotOf(j, n - 1), s1 = slotOf(j, n); [x, y] = box.slot(s0 + (s1 - s0) * io(clamp01((t - aL) / .5)));
+        }
+        on.add(c); put(c, { o: 1, x, y, r });
+      }
+      cards.forEach(c => { if (!on.has(c)) put(c, { o: 0, x: 0, y: 0, r: 0 }); });
+    }, D, { tail: true });
+    const oldL = pill(L.top, '丟掉最舊的', null, { x: 1150, y: 812, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26, point: 14, side: 'up', px: BIN[0] - 1150 });
+    popIn(oldL, m('old', 1.4)); tw(oldL, { o: 0 }, m('old', 5.3), .3);   // on 最舊的: the drops have begun at 滿了
+    const newL = pill(L.top, '留下最新的 10 則', null, { x: 875, y: 737, bg: ROOMS.yellow, ink: ROOMS.ink, size: 26, point: 14, side: 'right' });
+    popIn(newL, m('old', 5.6));
+    // for a sensor's data this is usually what we want: the newest
+    const freshL = pill(L.top, '感測器資料：要最新的', null, { x: 985, y: 420, bg: ROOMS.yellow, ink: ROOMS.ink, size: 30 });
+    popIn(freshL, m('fresh', .4));
+  }, { lead: false }],
+
+  ['late', '晚開的 listener', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D), { L, tk, ls, tube, bellT, bellL } = W;
+    // listener is not running yet: asleep, nothing fitted on its end of the tube
+    const tStart = m('first', -.8), rate = SLOW_RATE_T, v = 450, te = n => tStart + .25 + (n - LATE_FIRST) / rate;
+    ls.sleep(-1, tStart).hop(tStart, 14).flash(tStart + .1).face(tStart + .2, 'happy').face(tStart + 1.4, 'smile');
+    put(bellL, { o: 0 }); put(W.subL, { o: 0 }); popIn(bellL, tStart + .3); popIn(W.subL, tStart + .5);
+    // talker sends anyway; with nobody to receive them, earlier messages are gone (不會補給它), not kept
+    const tT = termPanel(L.top, LATE_TALKER, { x: 40, y: 120, w: 560, rows: 4, size: 24, title: 'talker' });
+    const lT = termPanel(L.top, LATE_LISTENER, { x: 620, y: 120, w: 960, rows: 3, size: 24, title: 'listener', o: 0 });
+    slowBadge(p, [[-1, null, 1 / TIMER_PERIOD / rate]], { xr: 1584, y: 52 });
+    tw(lT, { o: 1 }, tStart, .3);
+    const nAt = t => Math.floor(LATE_FIRST + (t - te(LATE_FIRST)) * rate);   // the last number talker has sent by t
+    const arrive = n => te(n) + (bellL.mouth - bellT.mouth) / v;
+    clockRun(t => {
+      tT.show(nAt(t) + 2);
+      let got = 0; for (let n = LATE_FIRST; arrive(n) <= t; n++) got++;
+      lT.show(t < tStart ? 0 : 1 + got);
+    }, D, { tail: true });
+    slipStream(tube.inside, D, { te, k0: LATE_FIRST - 14, k1: LATE_FIRST - 1, v, xa: bellT.mouth, xb: 600, fade: 140, s: .6, tag: k => String(k) });
+    slipStream(tube.inside, D, { te, k0: LATE_FIRST, k1: LATE_FIRST + 20, v, xa: bellT.mouth, xb: bellL.mouth, fade: 40, s: .6, tag: k => String(k) });
+    const goneL = pill(L.top, '沒人收：不保留', null, { x: 610, y: 548, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26 });
+    popIn(goneL, m('gone', .6)); tw(goneL, { o: 0 }, tStart, .3);
+    tk.eyes(.5, .9, .3).eyes(m('gone', .5), 1, .1);
+    // the first it gets was sent after it started: hello world 50, as in the real run
+    tw(lT.bar(1), { o: 1 }, arrive(LATE_FIRST) + .1, .3);
+    const firstL = pill(L.top, `第一則：hello world ${LATE_FIRST}`, null, { x: 1180, y: 330, bg: ROOMS.yellow, ink: ROOMS.ink, size: 26, point: 12, side: 'up' });
+    popIn(firstL, arrive(LATE_FIRST) + .3);
+    ls.eyes(tStart + .3, -.9, .3);
+    // either may start first
+    const bothL = pill(L.top, '誰先開都可以', null, { x: 800, y: 408, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 30 });
+    popIn(bothL, m('both', .3));
+    tk.face(m('both', .4), 'happy').hop(m('both', .5), 12); ls.face(m('both', .4), 'happy').hop(m('both', .65), 12);
+  }, { lead: false }],
+
+  ['typo', 'topic 名字打錯', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false }), { L, tk, ls, tube, bellT, bellL } = W;
+    // late's last picture, in the same wide shot: its two terminals, the numbered messages, its labels, the mouth
+    // pieces' pills and the 「放慢」 badge go over the first 0.4 s instead of vanishing at the cut
+    const tTL = termPanel(L.top, LATE_TALKER, { x: 40, y: 120, w: 560, rows: 4, size: 24, title: 'talker' }), lTL = termPanel(L.top, LATE_LISTENER, { x: 620, y: 120, w: 960, rows: 3, size: 24, title: 'listener' });
+    tTL.show(LATE_END.talkerLines); lTL.show(LATE_END.listenerLines);
+    LATE_END.slips.forEach(([n, x]) => { tw(roomsSlip(tube.inside, { x, y: TUBE.y, s: .6 }), { o: 0 }, .05, .35); tw(T(tube.inside, String(n), { x, y: TUBE.y - 34, size: 24, weight: 800, fill: ROOMS.ink, anchor: 'middle' }), { o: 0 }, .05, .35); });
+    const lateLabels = [pill(L.top, `第一則：hello world ${LATE_FIRST}`, null, { x: 1180, y: 330, bg: ROOMS.yellow, ink: ROOMS.ink, size: 26, point: 12, side: 'up' }),
+      pill(L.top, '誰先開都可以', null, { x: 800, y: 408, bg: '#fffdf8', ink: ROOMS.ink, line: ROOMS.ink, size: 30 }), W.pubL, W.subL, tTL, lTL];
+    lateLabels.forEach(e => { put(e, { o: 1 }); tw(e, { o: 0 }, .05, .4); });
+    slowBadge(p, [[-1, .1, 1 / TIMER_PERIOD / SLOW_RATE_T]], { xr: 1584, y: 52 });
+    tk.face(-1, 'happy').face(.4, 'smile'); ls.face(-1, 'happy').face(.4, 'smile');
+    // listener's topic name misspelt, one t missing: its line, the name boxed
+    const code = codePanel(L.top, [nameLine(TYPO)], { x: 470, y: 112, w: 1110, size: 24, title: 'listener.py', tint: ROBOT.listener.body, o: 0 });
+    tw(code, { o: 1 }, m('typo', -1.2), .4);
+    tw(code.box(0, `'${TYPO}'`, { stroke: '#e0503f' }), { o: 1 }, m('typo'), .3);
+    const missL = pill(L.top, `少了一個 t`, null, { x: 1180, y: 248, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26, point: 12, side: 'up' });
+    popIn(missL, m('typo', 1.8)); tw(missL, { o: 0 }, m('two', .1), .3);   // gone before the push in, not sliced by the frame's top
+    // so there are two channels (兩條通道): talker's /chatter, running to nobody, and listener's /chater, empty
+    const B = G(L.tube, { o: 0 }); L.tube.insertBefore(B, bellT);
+    const b1 = roomsTube(B, { ...TUBE, x1: 1000 }), b2 = roomsTube(B, { ...TUBE, x0: 1075, x1: TUBE.x1, name: `/${TYPO}` });
+    [b1, b2].forEach(b => b.edges.forEach(e => put(e, { d: 1 })));
+    tw(tube.g, { o: 0 }, m('two'), .5); tw(B, { o: 1 }, m('two'), .5);
+    cam.to(GAP_VIEW, m('two', .3), 1.3); cam.to(WIDE, m('silent', -1), 1.2);   // in on the two tubes, out again for the terminals
+    slowBadge(p, [[m('two', 3), null, 1 / TIMER_PERIOD / SLOW_RATE_T]], { y: 852, line: '#f4efe6' });   // at the foot, outlined so it reads on the dark board: at the top the code panel crosses it as the camera pulls back
+    const gapL = pill(L.top, '接不起來', null, { x: 1037, y: 748, bg: '#fffdf8', ink: ROOMS.ink, line: '#e0503f', size: 26, point: 12, side: 'up' });
+    popIn(gapL, m('two', 5));
+    tk.eyes(m('two', 3.5), 1, .2); ls.eyes(m('two', 6), -1, .2);
+    // no error, it just quietly receives nothing (安靜地什麼都收不到)
+    slipStream(b1.inside, D, { te: k => m('two', 3) + k / SLOW_RATE_T, k0: 0, k1: 60, v: 420, xa: bellT.mouth, xb: 1000, fade: 90 });
+    const lT = termPanel(L.top, CAPTURED.typoListener, { x: 620, y: 228, w: 960, rows: 1, size: 24, title: 'listener', o: 0 });
+    tw(lT, { o: 1 }, m('silent', -.3), .3); lT.show(1);
+    const wait = robotSay(L.top, '…', { x: 1290, y: 420, to: [1350, 470], size: 40, o: 0 });
+    popIn(wait, m('silent', 1));
+    ls.face(m('silent', .8), 'flat').to(m('silent', .8), 'tiltL', .5);
+    // ros2 topic list shows two names that look alike
+    const list = termPanel(L.top, CAPTURED.typoList, { x: 40, y: 228, w: 330, rows: 5, size: 24, title: 'Terminal', o: 0 });
+    list.show(CAPTURED.typoList.length); tw(list, { o: 1 }, m('list', 1.3), .4);
+    [1, 2].forEach(r => tw(list.bar(r), { o: 1 }, m('list', 3.3 + .3 * r), .3));
+    tk.eyes(m('list', 1.5), -.4, -.9);
+  }, { lead: false }],
+
+  ['q2', '小測驗', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false }), { L, tk, ls, tube, bellT } = W;
+    const B = G(L.tube); L.tube.insertBefore(B, bellT); put(tube.g, { o: 0 });   // (no code panel: the card needs talker's wall; the prompt names 'Chatter')
+    const b1 = roomsTube(B, { ...TUBE, x1: 1000 }), b2 = roomsTube(B, { ...TUBE, x0: 1075, x1: TUBE.x1, name: `/${CAPS}` });
+    [b1, b2].forEach(b => b.edges.forEach(e => put(e, { d: 1 })));
+    const ne = T(L.top, '≠', { x: 974, y: 508, size: 54, weight: 800, fill: '#e0503f', anchor: 'middle', o: 0 });   // between /chatter (to 915) and /Chatter (from 1033)
+    ls.eyes(.4, -.9, -.5).to(.4, 'tiltL', .5); tk.eyes(.4, .9, -.5);
+    const lost = roomsSlip(b1.inside, { o: 0, y: TUBE.y, s: .6 });
+    S.q2 = { ne, sign: b2.sign, lost, x0: bellT.mouth };
+  }, { lead: false, ask: done => quiz(Q2_CARD, [{
+    id: 'c-topic-case', prompt: [bi(`listener 的 topic 寫成大寫 C 開頭的 '${CAPS}'，會怎樣？`, `What happens if listener's topic is written with a capital C, as '${CAPS}'?`)],
+    build: choice([[bi('收不到任何 message，也沒有錯誤訊息', 'It receives nothing, with no error')],
+      [bi('一啟動就出現錯誤訊息', 'An error at start-up')], [bi('照樣收得到，名字不分大小寫', 'It still receives them: names ignore case')]], CASE_SAME ? 2 : 0,
+      bi(`/${CAPS} 和 /${TOPIC} 是兩個不同的名字：topic 名字分大小寫。listener 在另一條 topic 上等，什麼都收不到，ROS 也不會報錯。`,
+        `/${CAPS} and /${TOPIC} are two different names: topic names are case-sensitive. listener waits on another topic and receives nothing, and ROS reports no error.`),
+      [null, bi(`名字不一樣不算錯誤：ROS 只是多了一條叫 /${CAPS} 的 topic，啟動時不會有錯誤訊息。`,
+        `A different name is not an error: ROS just has one more topic, /${CAPS}, and nothing goes wrong at start-up.`),
+      bi(`topic 名字分大小寫：/${CAPS} 和 /${TOPIC} 是兩條不同的 topic，listener 收不到。`,
+        `Topic names are case-sensitive: /${CAPS} and /${TOPIC} are two different topics, so listener receives nothing.`)],
+      () => { const { ne, sign, lost, x0 } = S.q2; fx(ne, { o: 1 }, .1, .3); pulseFx(sign, 1.15); fx(lost, { o: 1, x: x0 }, .2, .05); fx(lost, { x: 985 }, .25, 1.6, lin); fx(lost, { o: 0 }, 1.7, .3); }),
+  }], done) }],
+
+  ['wrap', '整理', (m, D) => {
+    const p = panel(0), cam = camera(p, D, WIDE), w = cam.world, W = world(w, D, { pills: false, inbox: true }), { L, tk, ls, set, tube, bellT, bellL, box } = W, clock = set.clock;
+    const lT = termPanel(L.top, LISTEN_LINES, { x: 840, y: 130, w: 740, rows: 2, size: 24, title: 'listener' });
+    slowBadge(p, [[m('w1', -.5), null, null]], { xr: 820, y: 52 });
+    const loopT = robotPatrol(L.hold, { x: 215, y: 650, rx: 200, ry: 120, color: ROBOT.talker.dark, o: .9 });
+    const loopL = robotPatrol(L.hold, { x: 1400, y: 655, rx: 150, ry: 105, color: ROBOT.listener.dark, o: .9 });
+    clockRun(t => { loopT.set(.5 + t / 4); loopL.set(.5 + t / 4); }, D, { tail: true });
+    // the four steps where they happen along the route, left to right: the clock, talker's mouth piece, the queue, listener
+    const STEP = [[48, 430], [330, 752], [930, 752], [1150, 430]];
+    const steps = [
+      stepTag(L.top, 1, 'timer 到 → on_timer', { x: STEP[0][0], y: STEP[0][1], color: ROBOT.talker.dark }),
+      stepTag(L.top, 2, 'publish 到 /chatter', { x: STEP[1][0], y: STEP[1][1], color: ROBOT.talker.body }),
+      stepTag(L.top, 3, '進佇列', { x: STEP[2][0], y: STEP[2][1], color: ROOMS.violet, side: 'left' }),
+      stepTag(L.top, 4, 'on_message → 印出', { x: STEP[3][0], y: STEP[3][1], color: ROBOT.listener.dark }),
+    ];
+    ['w1', 'w2', 'w3', 'w4'].forEach((k, i) => popIn(steps[i], m(k, .1)));
+    // 1: the clock is due, spin calls on_timer
+    clockRun(t => { const u = t - m('w1'); clock.time(t < m('w1') ? clamp01(t / m('w1')) : 0, u >= 0 && u < 1.2 ? 1 - u / 1.2 : 0, u >= 0 && u < 1.2 ? 8 * (1 - u / 1.2) * Math.sin(u * 45) : 0); }, D, { tail: true });
+    tk.eyes(m('w1', -.3), -1, .3).flash(m('w1', .6));
+    // 2: data filled in, into the mouth; 3: down the tube into listener's queue; 4: taken out, on_message, a line printed
+    const slip = roomsSlip(L.top, { n: NEXT_N, o: 0 }), card = box.card(box.slips), [sx9, sy9] = box.slot(9);
+    const tIn = m('w2', 1.5), tQ = m('w3', .4), tTake = m('w4', 1.2), tPrint = m('w4', 3.6);
+    tk.to(m('w2', -.3), 'holdR', .4).eyes(m('w2'), .5, .2).to(tIn - .45, 'reachR', .45).to(tIn + .4, 'rest', .5).eyes(tIn + .3, 1, .2);
+    ls.eyes(tQ - .5, -.8, .6).to(tTake - .4, 'takeL', .4).to(tTake + .4, 'showL', .5).eyes(tTake + .4, -.7, -.4);
+    clockRun(t => {
+      if (t < m('w2')) { put(slip, { o: 0, x: 0, y: 0, s: 1 }); put(card, { o: 0, x: 0, y: 0 }); return; }
+      if (t < tIn) { const [hx, hy] = tk.handAt(t, 'R'); put(slip, { o: 1, x: hx + 4, y: hy - 18, s: 1 }); put(card, { o: 0 }); return; }
+      if (t < tQ) { put(slip, { o: 1, x: bellT.mouth + (bellL.mouth - bellT.mouth) * io(clamp01((t - tIn) / (tQ - tIn))), y: TUBE.y, s: .7 }); put(card, { o: 0 }); return; }
+      put(slip, { o: 0, x: 0, y: 0, s: 1 });
+      let [x, y] = [sx9, sy9];
+      if (t < tQ + .5) [x, y] = lerpPt([bellL.mouth + 10, TUBE.y], [sx9, sy9], io(clamp01((t - tQ) / .5)));
+      else if (t >= tTake) { const [hx, hy] = ls.handAt(t, 'L'); [x, y] = lerpPt([sx9, sy9], [hx, hy + 20], io(clamp01((t - tTake) / .35))); }
+      put(card, { o: 1, x, y });
+    }, D, { tail: true });
+    clockRun(t => lT.show(NEXT_N + (t >= tPrint ? 1 : 0)), D, { tail: true });
+    tw(lT.bar(1), { o: 1 }, tPrint + .1, .3);
+    ls.flash(m('w4', 2.3)).face(tPrint, 'happy');
+  }, { lead: false }],
+
+  ['final1', '本章練習', () => { panel(0); }, { ask: done => quiz(SCREEN, PRACTICE, done, bi('本章練習', 'Chapter practice')) }],
+  ['finish', '完成', () => { panel(0); }, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- chapter practice (full screen) ---------- */
+const PRACTICE = [
+  { id: 'p-must-match', prompt: [bi('talker 和 listener 要能通訊，哪一組一定要一樣？', 'What must be the same for talker and listener to communicate?')],
+    build: choice([[bi('topic 的名字和型別', "the topic's name and type")], [bi('node 的名字', 'the node names')], [bi('佇列長度（建立時寫的 10）', 'the queue length (the 10 written when creating them)')]], 0,
+      bi(`只認 topic 的名字和型別：兩邊都要是 /${TOPIC}，型別都要是 ${CAPTURED.typoInfoChatter[1].replace('Type: ', '')}。`,
+        `Only the topic's name and type count: both must use /${TOPIC}, and both must use the type ${CAPTURED.typoInfoChatter[1].replace('Type: ', '')}.`),
+      [null, bi('node 的名字本來就不一樣（talker、listener），照樣能通訊。', 'The node names are different anyway (talker, listener), and they still communicate.'),
+        bi('佇列長度兩邊各自決定：一邊寫 10、一邊寫 5，一樣能通訊。', 'Each side sets its own queue length: one can use 10 and the other 5, and they still communicate.')]) },
+  { id: 'p-no-spin', prompt: [bi('talker 的 main 忘了寫 rclpy.spin(node)，執行後會怎樣？', "talker's main forgot rclpy.spin(node). What happens when you run it?")],
+    build: choice([[bi('程式馬上結束，一則都沒送出', 'The program ends at once and sends nothing')], [bi('送出一則就停了', 'It sends one message and stops')],
+      [bi(`照樣每秒送出 ${1 / TIMER_PERIOD} 則`, `It still sends ${1 / TIMER_PERIOD} messages a second`)]], 0,
+      bi('沒有 spin，就沒有人看時鐘：timer 不會響、on_timer 不會被呼叫，main 跑完就結束了。',
+        'Without spin, nobody watches the clock: the timer never goes off, on_timer is never called, and main runs to the end and exits.'),
+      [null, bi('連第一則也不會送：每一則都要等 timer 響、由 spin 呼叫 on_timer 才送得出去。', 'Not even the first one: every message waits for the timer to go off and for spin to call on_timer.'),
+        bi(`每秒 ${1 / TIMER_PERIOD} 則要靠 spin 一直轉、一直呼叫 on_timer；沒有 spin，timer 永遠不會響。`,
+          `${1 / TIMER_PERIOD} messages a second needs spin to keep going round and calling on_timer; without spin the timer never goes off.`)]) },
+];
+boot();
+</script>
+</body>
+</html>
